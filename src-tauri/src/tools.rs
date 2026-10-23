@@ -1,7 +1,7 @@
 //! Installs the external tools (yt-dlp, ffmpeg/ffprobe) into the app's own `bin` folder
 //! when they aren't already on the system, and keeps the app-managed yt-dlp up to date.
 
-use crate::ytdlp::{bin_dir, command, ffmpeg_dir, ytdlp_path};
+use crate::ytdlp::{bin_dir, command, ffmpeg_dir, own_ytdlp, ytdlp_path};
 use serde::Serialize;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -15,6 +15,7 @@ static FFMPEG_LOCK: Mutex<()> = Mutex::const_new(());
 
 const EXE: &str = std::env::consts::EXE_SUFFIX;
 const UPDATE_EVERY: Duration = Duration::from_secs(7 * 24 * 3600);
+const YTDLP_RELEASES: &str = "https://github.com/yt-dlp/yt-dlp/releases";
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,7 +37,9 @@ fn own_bin() -> Result<&'static PathBuf, String> {
 
 /// Downloads `url` into memory, reporting 0–100 progress.
 async fn download(app: &AppHandle, tool: &'static str, url: &str) -> Result<Vec<u8>, String> {
-    let mut resp = reqwest::get(url)
+    let mut resp = crate::net::client()
+        .get(url)
+        .send()
         .await
         .and_then(|r| r.error_for_status())
         .map_err(|e| format!("{tool} 다운로드 실패: {e}"))?;
@@ -97,35 +100,98 @@ fn unzip_into(zip: &[u8], dest: &Path, keep: impl Fn(&str) -> bool) -> Result<us
     Ok(n)
 }
 
-/// Makes sure yt-dlp is available, downloading the standalone build if needed.
-pub async fn ensure_ytdlp(app: &AppHandle) -> Result<PathBuf, String> {
-    let _guard = YTDLP_LOCK.lock().await;
-    if let Some(p) = ytdlp_path() {
-        return Ok(p);
+/// Extracts all of `zip` into `dest`, keeping its folder layout and file modes.
+fn unzip_tree(zip: &[u8], dest: &Path) -> Result<(), String> {
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip)).map_err(|e| e.to_string())?;
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
+        let Some(rel) = entry.enclosed_name() else { continue };
+        let out = dest.join(rel);
+        if entry.is_dir() {
+            std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+            continue;
+        }
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let mut file = std::fs::File::create(&out).map_err(|e| e.to_string())?;
+        std::io::copy(&mut entry, &mut file).map_err(|e| e.to_string())?;
+        #[cfg(unix)]
+        if let Some(mode) = entry.unix_mode() {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&out, std::fs::Permissions::from_mode(mode & 0o777)).map_err(|e| e.to_string())?;
+        }
     }
+    Ok(())
+}
+
+/// Downloads the latest yt-dlp into the app's `bin` folder (replacing any older copy there).
+async fn install_ytdlp(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = own_bin()?;
+    tokio::fs::create_dir_all(dir).await.map_err(|e| e.to_string())?;
     let asset = if cfg!(windows) {
-        "yt-dlp.exe"
+        "yt-dlp_win.zip"
     } else if cfg!(target_os = "macos") {
-        "yt-dlp_macos"
+        "yt-dlp_macos.zip"
     } else {
         "yt-dlp_linux"
     };
-    let dir = own_bin()?;
-    tokio::fs::create_dir_all(dir).await.map_err(|e| e.to_string())?;
-    let result: Result<PathBuf, String> = async {
-        let bytes = download(app, "yt-dlp", &format!("https://github.com/yt-dlp/yt-dlp/releases/latest/download/{asset}")).await?;
-        emit(app, "yt-dlp", "installing", 100.0, None);
-        let dest = dir.join(format!("yt-dlp{EXE}"));
-        write_executable(&dest, &bytes).await?;
-        let _ = tokio::fs::write(dir.join(".yt-dlp-checked"), b"").await;
-        Ok(dest)
-    }
-    .await;
+    let bytes = download(app, "yt-dlp", &format!("{YTDLP_RELEASES}/latest/download/{asset}")).await?;
+    emit(app, "yt-dlp", "installing", 100.0, None);
+    let single_file = dir.join(format!("yt-dlp{EXE}"));
+    let path = match own_ytdlp() {
+        Some(exe) => {
+            // Unpack next to the old copy, then swap, so a half-extracted folder is never used
+            let dist = exe.parent().ok_or("도구 폴더를 찾을 수 없습니다")?.to_path_buf();
+            let tmp = dist.with_extension("part");
+            let _ = tokio::fs::remove_dir_all(&tmp).await;
+            let t = tmp.clone();
+            tokio::task::spawn_blocking(move || unzip_tree(&bytes, &t))
+                .await
+                .map_err(|e| e.to_string())??;
+            let _ = tokio::fs::remove_dir_all(&dist).await;
+            tokio::fs::rename(&tmp, &dist).await.map_err(|e| e.to_string())?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755));
+            }
+            // Earlier versions installed the slow single-file build here
+            let _ = tokio::fs::remove_file(&single_file).await;
+            exe
+        }
+        None => {
+            write_executable(&single_file, &bytes).await?;
+            single_file
+        }
+    };
+    // macOS checks a new binary on its first launch (several seconds): get that out of the way
+    // now instead of during the first search
+    let _ = tokio::time::timeout(Duration::from_secs(60), command(&path).arg("--version").output()).await;
+    let _ = tokio::fs::write(dir.join(".yt-dlp-checked"), b"").await;
+    Ok(path)
+}
+
+async fn install_ytdlp_reporting(app: &AppHandle) -> Result<PathBuf, String> {
+    let result = install_ytdlp(app).await;
     match &result {
         Ok(_) => emit(app, "yt-dlp", "done", 100.0, None),
         Err(e) => emit(app, "yt-dlp", "error", 0.0, Some(e.clone())),
     }
     result
+}
+
+/// Makes sure yt-dlp is available, downloading it if needed.
+pub async fn ensure_ytdlp(app: &AppHandle) -> Result<PathBuf, String> {
+    // Usual case: already there, no need to wait behind an install or update
+    if let Some(p) = ytdlp_path() {
+        return Ok(p);
+    }
+    let _guard = YTDLP_LOCK.lock().await;
+    if let Some(p) = ytdlp_path() {
+        return Ok(p);
+    }
+    install_ytdlp_reporting(app).await
 }
 
 /// Makes sure ffmpeg + ffprobe are available, downloading static builds if needed.
@@ -181,33 +247,48 @@ pub async fn ensure_ffmpeg(app: &AppHandle) -> Result<PathBuf, String> {
     result
 }
 
-/// The yt-dlp that Muse installed itself updates weekly (YouTube changes often break old versions).
+/// Version tag of the newest yt-dlp release (the `latest` link redirects to its tag page).
+async fn latest_ytdlp_version() -> Option<String> {
+    let resp = crate::net::client().get(format!("{YTDLP_RELEASES}/latest")).timeout(crate::net::API_TIMEOUT).send().await.ok()?;
+    resp.url().path_segments()?.next_back().map(str::to_string)
+}
+
+/// The yt-dlp that Muse installed itself is kept current (YouTube changes often break old versions),
+/// and the slow single-file build from earlier versions is swapped for the folder build.
 /// Copies managed by Homebrew / winget are left to their package manager.
-pub async fn update_ytdlp_if_stale() {
+pub async fn update_ytdlp_if_stale(app: &AppHandle) {
     let Some(dir) = bin_dir() else { return };
-    let own = dir.join(format!("yt-dlp{EXE}"));
-    if !own.is_file() || ytdlp_path().as_deref() != Some(own.as_path()) {
-        return;
-    }
-    let stamp = dir.join(".yt-dlp-checked");
-    let fresh = std::fs::metadata(&stamp)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| SystemTime::now().duration_since(t).ok())
-        .is_some_and(|age| age < UPDATE_EVERY);
-    if fresh {
-        return;
+    let Some(current) = ytdlp_path() else { return };
+    let single_file = dir.join(format!("yt-dlp{EXE}"));
+    let outdated_build = own_ytdlp().is_some() && current == single_file;
+    if !outdated_build {
+        let managed = own_ytdlp().as_ref() == Some(&current) || current == single_file;
+        if !managed {
+            return;
+        }
+        let stamp = dir.join(".yt-dlp-checked");
+        let fresh = std::fs::metadata(&stamp)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| SystemTime::now().duration_since(t).ok())
+            .is_some_and(|age| age < UPDATE_EVERY);
+        if fresh {
+            return;
+        }
+        let Some(latest) = latest_ytdlp_version().await else { return };
+        let installed = command(&current).arg("--version").output().await.ok();
+        if installed.is_some_and(|o| String::from_utf8_lossy(&o.stdout).trim() == latest) {
+            let _ = tokio::fs::write(&stamp, b"").await;
+            return;
+        }
     }
     let _guard = YTDLP_LOCK.lock().await;
-    let ok = command(&own).arg("-U").output().await.is_ok_and(|o| o.status.success());
-    if ok {
-        let _ = tokio::fs::write(&stamp, b"").await;
-    }
+    let _ = install_ytdlp_reporting(app).await;
 }
 
 /// Startup task: install whatever is missing, then refresh yt-dlp if it's old.
 pub async fn ensure_all(app: AppHandle) {
     let _ = ensure_ytdlp(&app).await;
     let _ = ensure_ffmpeg(&app).await;
-    update_ytdlp_if_stale().await;
+    update_ytdlp_if_stale(&app).await;
 }

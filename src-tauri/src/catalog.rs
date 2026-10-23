@@ -54,7 +54,7 @@ fn track_of(r: &serde_json::Value) -> Option<CatalogTrack> {
 }
 
 async fn get(url: String) -> Result<Vec<serde_json::Value>, String> {
-    let json: serde_json::Value = reqwest::get(url)
+    let json: serde_json::Value = crate::net::get(&url)
         .await
         .map_err(|e| e.to_string())?
         .json()

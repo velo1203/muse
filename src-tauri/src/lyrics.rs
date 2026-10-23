@@ -22,10 +22,7 @@ fn from_json(v: &serde_json::Value) -> Lyrics {
 }
 
 async fn fetch(title: &str, artist: &str, album: &str, duration: f64) -> Option<Lyrics> {
-    let client = reqwest::Client::builder()
-        .user_agent("Muse/0.1 (personal music player)")
-        .build()
-        .ok()?;
+    let client = crate::net::client();
     // Exact match first (title/artist/album/duration), then a looser search.
     let exact = client
         .get("https://lrclib.net/api/get")
@@ -35,6 +32,7 @@ async fn fetch(title: &str, artist: &str, album: &str, duration: f64) -> Option<
             ("album_name", album),
             ("duration", &format!("{}", duration.round() as i64)),
         ])
+        .timeout(crate::net::API_TIMEOUT)
         .send()
         .await
         .ok()?;
@@ -44,7 +42,7 @@ async fn fetch(title: &str, artist: &str, album: &str, duration: f64) -> Option<
         }
     }
     let search = |params: Vec<(&'static str, String)>| {
-        let req = client.get("https://lrclib.net/api/search").query(&params);
+        let req = client.get("https://lrclib.net/api/search").query(&params).timeout(crate::net::API_TIMEOUT);
         async move { req.send().await.ok()?.json::<Vec<serde_json::Value>>().await.ok() }
     };
     let mut results = search(vec![("track_name", title.to_string()), ("artist_name", artist.to_string())]).await?;

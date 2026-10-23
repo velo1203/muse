@@ -102,7 +102,31 @@ img { display: block; }
 .dl-btn.done:hover { box-shadow: none; }
 .dl-btn.err { box-shadow: inset 0 0 0 1px var(--danger); color: var(--danger); }
 .dl-btn.busy { box-shadow: none; color: var(--text-subdued); cursor: default; padding-inline: 8px; font-variant-numeric: tabular-nums; }
-.dl-btn.busy:hover { transform: none; }
+.dl-btn.busy:hover { transform: none; box-shadow: none; }
+
+/* Download button steps: 받기 → 찾는 중 → 진행률 → 보관됨 */
+.dl-btn { position: relative; }
+.dl-swap { display: inline-flex; align-items: center; gap: 6px; animation: dl-swap-in .28s var(--ease) both; }
+@keyframes dl-swap-in { from { opacity: 0; transform: translateY(6px) scale(.96); } }
+.dl-btn:hover .dl-arrow { animation: dl-nudge .6s var(--ease); }
+@keyframes dl-nudge { 40% { transform: translateY(2px); } }
+.dl-searching { animation: dl-breathe 1.4s ease-in-out infinite; }
+@keyframes dl-breathe { 50% { opacity: .5; } }
+.ring-fill { transition: stroke-dashoffset .35s var(--ease); }
+.dl-btn.err .dl-swap { animation: dl-swap-in .28s var(--ease) both, dl-shake .4s .05s; }
+@keyframes dl-shake { 25% { transform: translateX(-3px); } 50% { transform: translateX(3px); } 75% { transform: translateX(-2px); } }
+.dl-btn.just-done .dl-check { animation: dl-pop .45s var(--ease); }
+@keyframes dl-pop { 0% { transform: scale(.3); } 60% { transform: scale(1.25); } 100% { transform: scale(1); } }
+.dl-btn.just-done::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  box-shadow: 0 0 0 2px var(--accent); animation: dl-burst .6s var(--ease) forwards;
+}
+@keyframes dl-burst { from { opacity: .9; transform: scale(.9); } to { opacity: 0; transform: scale(1.35); } }
+@media (prefers-reduced-motion: reduce) {
+  .dl-swap, .dl-searching, .dl-btn .dl-arrow, .dl-btn.just-done .dl-check { animation: none !important; }
+  .dl-btn.just-done::after { animation-duration: 1ms; }
+  .ring-fill { transition: none; }
+}
 
 /* Icon-only buttons */
 .icon-btn {
@@ -375,10 +399,13 @@ img { display: block; }
 .top-card:hover { background: var(--tint-hi); }
 .top-card .art { width: 92px; height: 92px; border-radius: var(--r-art); overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,.5); }
 .top-card .art img { width: 100%; height: 100%; object-fit: cover; }
-.top-card h3 { font-size: 32px; font-weight: 800; margin: 20px 0 4px; letter-spacing: -0.04em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 72px; }
-.top-card .s { color: var(--text-subdued); }
+/* Title and actions share one row, so a wider action (e.g. "음원 찾는 중", "100%") pushes the title instead of covering it */
+.top-card .foot { display: flex; align-items: flex-end; gap: 16px; margin-top: 20px; }
+.top-card .meta { flex: 1; min-width: 0; }
+.top-card h3 { font-size: 32px; font-weight: 800; margin: 0 0 4px; letter-spacing: -0.04em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.top-card .s { color: var(--text-subdued); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .top-card .s b { color: var(--text); font-weight: 600; }
-.top-card .corner { position: absolute; right: 20px; bottom: 20px; }
+.top-card .corner { flex-shrink: 0; }
 .notice { margin: 16px 24px; padding: 14px 16px; border-radius: var(--r-input); background: rgba(255, 179, 92, .1); color: #ffd7a8; font-size: 14px; }
 .notice-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .notice code { background: rgba(0,0,0,.35); padding: 2px 6px; border-radius: 2px; user-select: text; -webkit-user-select: text; }

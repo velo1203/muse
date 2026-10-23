@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, CirclePlus, Download, Link2, Loader2, Pause, Play, RotateCcw } from "lucide-react";
 import { api, formatTime, isYoutubeUrl } from "../api";
 import { useStore } from "../store";
@@ -42,37 +42,64 @@ export function DlButton({
 }: { job?: DownloadJob; inLibrary?: Track; onStart: () => void; onPlay?: () => void; compact?: boolean }) {
   const { current, playing } = useStore();
   const icon = compact ? " icon" : "";
-  if (inLibrary || job?.status === "done") {
+  const phase = inLibrary || job?.status === "done" ? "done" : job?.status === "error" ? "error" : job ? "busy" : "idle";
+  // Celebrate only a download that finished while on screen, not songs that were already saved
+  const prev = useRef(phase);
+  const [justFinished, setJustFinished] = useState(false);
+  useEffect(() => {
+    if (phase === "done" && prev.current === "busy") setJustFinished(true);
+    prev.current = phase;
+  }, [phase]);
+
+  if (phase === "done") {
     const isCur = inLibrary && current === inLibrary.id;
     const Icon = isCur && playing ? Pause : isCur ? Play : Check;
     return (
-      <button className={`dl-btn done${icon}`} onClick={onPlay} title={isCur ? undefined : "보관됨 · 눌러서 재생"}>
-        <Icon size={14} />
-        {!compact && (isCur ? (playing ? "재생 중" : "일시정지") : "보관됨")}
+      <button
+        className={`dl-btn done${icon}${justFinished ? " just-done" : ""}`}
+        onClick={onPlay}
+        onAnimationEnd={(e) => e.animationName === "dl-burst" && setJustFinished(false)}
+        title={isCur ? undefined : "보관됨 · 눌러서 재생"}
+      >
+        <span className="dl-swap" key="done">
+          <Icon size={14} className="dl-check" />
+          {!compact && (isCur ? (playing ? "재생 중" : "일시정지") : "보관됨")}
+        </span>
       </button>
     );
   }
-  if (job?.status === "error")
+  if (phase === "error")
     return (
-      <button className={`dl-btn err${icon}`} onClick={onStart} title={job.message}>
-        <RotateCcw size={14} /> {!compact && "재시도"}
+      <button className={`dl-btn err${icon}`} onClick={onStart} title={job!.message}>
+        <span className="dl-swap" key="error">
+          <RotateCcw size={14} /> {!compact && "재시도"}
+        </span>
       </button>
     );
-  if (job)
+  if (job) {
+    // One key per step so the label slides in when the step changes, but not on every progress tick
+    const step = job.status === "searching" ? "searching" : job.status === "downloading" ? "downloading" : "waiting";
     return (
       <span className={`dl-btn busy${icon}`} title="받는 중">
-        {job.status === "downloading" && job.progress > 0 ? <Ring pct={job.progress} /> : <Loader2 size={14} className="spin" />}
-        {!compact &&
-          (job.status === "searching"
-            ? "음원 찾는 중"
-            : job.status === "queued" || job.status === "pending"
-              ? "대기 중"
-              : `${Math.round(job.progress)}%`)}
+        <span className={`dl-swap ${step}`} key={step}>
+          {step === "downloading" && job.progress > 0 ? <Ring pct={job.progress} /> : <Loader2 size={14} className="spin" />}
+          {!compact &&
+            (step === "searching" ? (
+              <span className="dl-searching">음원 찾는 중</span>
+            ) : step === "waiting" ? (
+              "대기 중"
+            ) : (
+              `${Math.round(job.progress)}%`
+            ))}
+        </span>
       </span>
     );
+  }
   return (
     <button className={`dl-btn${icon}`} onClick={onStart} title="받기">
-      <Download size={14} /> {!compact && "받기"}
+      <span className="dl-swap" key="idle">
+        <Download size={14} className="dl-arrow" /> {!compact && "받기"}
+      </span>
     </button>
   );
 }
@@ -125,7 +152,7 @@ function Ring({ pct }: { pct: number }) {
     <svg className="ring" viewBox="0 0 22 22" style={{ width: 16, height: 16 }}>
       <circle cx="11" cy="11" r={r} fill="none" stroke="rgba(255,255,255,.15)" strokeWidth="3" />
       <circle
-        cx="11" cy="11" r={r} fill="none" stroke="var(--accent)" strokeWidth="3"
+        className="ring-fill" cx="11" cy="11" r={r} fill="none" stroke="var(--accent)" strokeWidth="3"
         strokeDasharray={c} strokeDashoffset={c * (1 - pct / 100)} transform="rotate(-90 11 11)" strokeLinecap="round"
       />
     </svg>
@@ -359,11 +386,14 @@ export function SearchView({ query = "" }: { query?: string }) {
                     <div className="art">
                       <img src={top.artwork} alt="" />
                     </div>
-                    <h3>{top.title}</h3>
-                    <div className="s">
-                      곡 • <b>{top.artist}</b>
-                    </div>
-                    <div className="corner">
+                    <div className="foot">
+                      <div className="meta">
+                        <h3>{top.title}</h3>
+                        <div className="s">
+                          곡 • <b>{top.artist}</b>
+                        </div>
+                      </div>
+                      <div className="corner">
                       {topOwned ? (
                         <button className="play-fab" onClick={() => playOne(topOwned)}>
                           {s.current === topOwned.id && s.playing ? (
@@ -379,6 +409,7 @@ export function SearchView({ query = "" }: { query?: string }) {
                           onStart={(after) => downloadCatalog(top, after)}
                         />
                       )}
+                      </div>
                     </div>
                   </div>
                 </div>

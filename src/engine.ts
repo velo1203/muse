@@ -59,6 +59,7 @@ export class Engine {
   private listeners: Record<string, Listener[]> = {};
   private volume = 1;
   private muted = false;
+  private mono = false;
 
   constructor() {
     this.ctx = new AudioContext();
@@ -200,14 +201,30 @@ export class Engine {
   private applyMaster() {
     // Perceptual curve so the slider feels linear
     const v = this.muted ? 0 : this.volume ** 2;
-    this.master.gain.setTargetAtTime(v, this.ctx.currentTime, 0.02);
+    this.glide(this.master.gain, v, 0.02);
+  }
+
+  /**
+   * Glides `param` to `value` starting now. Earlier automation is dropped first: dragging an EQ
+   * knob fires dozens of updates a second, and letting them pile up on the timeline makes
+   * WebKit's audio thread lag behind (or skip) the latest value.
+   */
+  private glide(param: AudioParam, value: number, timeConstant: number) {
+    const now = this.ctx.currentTime;
+    const from = param.value;
+    param.cancelScheduledValues(0);
+    param.setValueAtTime(from, now);
+    param.setTargetAtTime(value, now, timeConstant);
   }
 
   setEq(enabled: boolean, gains: number[]) {
-    this.filters.forEach((f, i) => f.gain.setTargetAtTime(enabled ? gains[i] ?? 0 : 0, this.ctx.currentTime, 0.03));
+    this.filters.forEach((f, i) => this.glide(f.gain, enabled ? gains[i] ?? 0 : 0, 0.03));
   }
 
   setMono(mono: boolean) {
+    // Rewiring the graph mid-playback glitches, so only do it when the setting actually changes
+    if (mono === this.mono) return;
+    this.mono = mono;
     for (const d of this.decks) {
       d.gain.disconnect();
       if (mono) d.gain.connect(this.monoNode);
@@ -220,6 +237,6 @@ export class Engine {
   /** Gain (dB) applied to reach the target loudness; null disables normalization. */
   setNormalization(gainDb: number | null) {
     const lin = gainDb === null ? 1 : 10 ** (gainDb / 20);
-    this.normGain.gain.setTargetAtTime(lin, this.ctx.currentTime, 0.05);
+    this.glide(this.normGain.gain, lin, 0.05);
   }
 }

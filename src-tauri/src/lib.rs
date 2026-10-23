@@ -2,6 +2,7 @@ mod catalog;
 mod library;
 mod lyrics;
 mod media;
+mod net;
 mod tools;
 mod ytdlp;
 
@@ -286,7 +287,7 @@ async fn replace_source(
 }
 
 async fn fetch_cover(url: &str, dest: &Path) -> Option<String> {
-    let bytes = reqwest::get(url).await.ok()?.error_for_status().ok()?.bytes().await.ok()?;
+    let bytes = net::get(url).await.ok()?.bytes().await.ok()?;
     // YouTube serves a tiny placeholder when maxresdefault doesn't exist
     if bytes.len() < 2048 {
         return None;

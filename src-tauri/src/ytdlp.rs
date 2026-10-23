@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::OnceLock;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
@@ -39,8 +40,21 @@ fn find_binary(name: &str) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
+/// Where Muse keeps its own yt-dlp on macOS / Windows: the folder build, which starts in a
+/// fraction of a second. The single-file build unpacks itself on every launch (~7 s each time).
+pub fn own_ytdlp() -> Option<PathBuf> {
+    let exe = if cfg!(target_os = "macos") {
+        "yt-dlp_macos"
+    } else if cfg!(windows) {
+        "yt-dlp.exe"
+    } else {
+        return None;
+    };
+    Some(bin_dir()?.join("yt-dlp-dist").join(exe))
+}
+
 pub fn ytdlp_path() -> Option<PathBuf> {
-    find_binary("yt-dlp")
+    own_ytdlp().filter(|p| p.is_file()).or_else(|| find_binary("yt-dlp"))
 }
 
 pub fn ffmpeg_dir() -> Option<PathBuf> {
@@ -55,6 +69,8 @@ pub fn ffmpeg_tool(name: &str) -> Option<PathBuf> {
 pub fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
     #[allow(unused_mut)]
     let mut cmd = Command::new(program);
+    // A timed-out or abandoned yt-dlp shouldn't keep running in the background
+    cmd.kill_on_drop(true);
     #[cfg(windows)]
     {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -74,19 +90,28 @@ pub struct YtResult {
     pub thumbnail: String,
 }
 
-pub async fn search(query: &str, limit: u32) -> Result<Vec<YtResult>, String> {
-    let bin = ytdlp_path().ok_or("yt-dlp를 찾을 수 없습니다. `brew install yt-dlp`로 설치해주세요.")?;
-    let out = command(bin)
-        .arg(format!("ytsearch{limit}:{query}"))
-        .args(["--flat-playlist", "-J", "--no-warnings"])
-        .output()
+/// How long a search / link lookup may take before it's reported as failed.
+const LISTING_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Runs `yt-dlp --flat-playlist -J` on a search term or URL and parses its JSON.
+async fn flat_listing(bin: &Path, target: &str) -> Result<serde_json::Value, String> {
+    let run = command(bin)
+        .arg(target)
+        .args(["--flat-playlist", "-J", "--no-warnings", "--socket-timeout", "15"])
+        .output();
+    let out = tokio::time::timeout(LISTING_TIMEOUT, run)
         .await
+        .map_err(|_| "YouTube 응답이 너무 늦어요. 인터넷 연결을 확인하고 다시 시도해주세요.".to_string())?
         .map_err(|e| e.to_string())?;
     if !out.status.success() {
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
     }
-    let json: serde_json::Value =
-        serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
+    serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())
+}
+
+pub async fn search(query: &str, limit: u32) -> Result<Vec<YtResult>, String> {
+    let bin = ytdlp_path().ok_or("yt-dlp를 찾을 수 없습니다. `brew install yt-dlp`로 설치해주세요.")?;
+    let json = flat_listing(&bin, &format!("ytsearch{limit}:{query}")).await?;
     let entries = json["entries"].as_array().cloned().unwrap_or_default();
     Ok(entries
         .iter()
@@ -186,6 +211,8 @@ pub async fn download_audio(
             "--no-playlist",
             "--no-warnings",
             "--newline",
+            "--socket-timeout",
+            "20",
             "--progress",
             "--no-simulate",
             "--progress-template",
@@ -273,16 +300,7 @@ pub async fn measure_loudness(path: &Path) -> Option<(f64, f64)> {
 /// Lists the video(s) behind a YouTube link: a single video or every entry of a playlist.
 pub async fn resolve_url(url: &str) -> Result<Vec<YtResult>, String> {
     let bin = ytdlp_path().ok_or("yt-dlp를 찾을 수 없습니다. `brew install yt-dlp`로 설치해주세요.")?;
-    let out = command(bin)
-        .arg(url)
-        .args(["--flat-playlist", "-J", "--no-warnings"])
-        .output()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
-    }
-    let json: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
+    let json = flat_listing(&bin, url).await?;
     let entries = match json["entries"].as_array() {
         Some(e) => e.clone(),
         None => vec![json],

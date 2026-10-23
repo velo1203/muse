@@ -571,9 +571,19 @@ export const useStore = create<State & Actions>((set, get) => {
           [jobId]: { jobId, key, title: req.title, artist: req.artist, artwork: req.artwork ?? "", status: "pending", progress: 0 },
         },
       });
+      // The command's own result settles the job too, in case a progress event was missed
       api
         .downloadTrack({ jobId, ...req })
-        .catch((e) => get().showToast(`다운로드 실패: ${String(e).slice(0, 80)}`));
+        .then((track) => {
+          if (get().downloads[jobId]?.status === "done") return;
+          updateJob(jobId, { status: "done", progress: 100, trackId: track.id });
+          runAfter(jobId, track.id);
+        })
+        .catch((e) => {
+          afterActions.delete(jobId);
+          updateJob(jobId, { status: "error", message: String(e) });
+          get().showToast(`다운로드 실패: ${String(e).slice(0, 80)}`);
+        });
       return jobId;
     },
     replaceSource: (track, youtubeId) => {
@@ -596,12 +606,16 @@ export const useStore = create<State & Actions>((set, get) => {
       api
         .replaceSource(jobId, track.id, youtubeId)
         .then((lib) => {
+          updateJob(jobId, { status: "done", progress: 100, trackId: track.id });
           get().setLibrary(lib);
           get().showToast(`'${track.title}' 음원을 교체했어요`);
           // Reload so the new file plays instead of the deleted one
           if (wasCurrent) load(track.id, get().playing);
         })
-        .catch((e) => get().showToast(`음원 교체 실패: ${String(e).slice(0, 80)}`));
+        .catch((e) => {
+          updateJob(jobId, { status: "error", message: String(e) });
+          get().showToast(`음원 교체 실패: ${String(e).slice(0, 80)}`);
+        });
     },
     retryDownload: (jobId) => {
       const job = get().downloads[jobId];
