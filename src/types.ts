@@ -117,3 +117,18 @@ export type View =
   | { kind: "history" }
   | { kind: "downloads" }
   | { kind: "settings" };
+
+export interface ToolEvent {
+  tool: "yt-dlp" | "ffmpeg";
+  stage: "downloading" | "installing" | "done" | "error";
+  progress: number;
+  message: string | null;
+}
+
+/** What to do with a song once its download finishes */
+export interface AfterDownload {
+  play?: boolean;
+  queue?: "next" | "end";
+  like?: boolean;
+  playlistId?: string;
+}

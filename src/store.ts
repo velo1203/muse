@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 import { api, fileUrl, type DownloadRequest } from "./api";
-import type { DownloadJob, Library, Track, View } from "./types";
+import type { AfterDownload, DownloadJob, Library, ToolEvent, Track, View } from "./types";
 import { EQ_PRESETS, Engine, LOUDNESS_TARGETS, type VolumeLevel } from "./engine";
 
 type Repeat = "off" | "all" | "one";
@@ -52,7 +52,7 @@ function writeJson(key: string, value: unknown) {
 
 export type Modal =
   | { kind: "editTrack"; trackId: string; tab?: "info" | "source" }
-  | { kind: "newPlaylist"; trackIds?: string[] }
+  | { kind: "newPlaylist"; trackIds?: string[]; onCreated?: (playlistId: string) => void }
   | null;
 
 /** null = off, a timestamp = pause at that time, "track" = pause when the current song ends */
@@ -85,6 +85,8 @@ interface State {
   duration: number;
   playback: PlaybackSettings;
   sleep: SleepTimer;
+  /** Latest install status of the external tools (yt-dlp / ffmpeg) */
+  tools: Partial<Record<ToolEvent["tool"], ToolEvent>>;
 }
 
 interface Actions {
@@ -121,7 +123,7 @@ interface Actions {
   /** Plays queue[i] directly (skipping anything in upNext) */
   jumpTo: (i: number) => void;
 
-  startDownload: (req: Omit<DownloadRequest, "jobId"> & { key: string }) => string;
+  startDownload: (req: Omit<DownloadRequest, "jobId"> & { key: string; after?: AfterDownload }) => string;
   replaceSource: (track: Track, youtubeId?: string) => void;
   retryDownload: (jobId: string) => void;
   clearFinishedDownloads: () => void;
@@ -143,6 +145,8 @@ function shuffled<T>(arr: T[]) {
 let toastTimer: number | undefined;
 /** Requests kept so failed downloads can be retried */
 const downloadRequests = new Map<string, Omit<DownloadRequest, "jobId">>();
+/** Follow-up actions (playlist, like, queue…) to run when a job finishes */
+const afterActions = new Map<string, AfterDownload[]>();
 
 interface SavedSession {
   queue: string[];
@@ -292,6 +296,29 @@ export const useStore = create<State & Actions>((set, get) => {
     engine.setNormalization(t ? normalizationDb(t) : null);
   };
 
+  /** Applies queued follow-ups once a download has produced a library track. */
+  const runAfter = async (jobId: string, trackId: string) => {
+    const list = afterActions.get(jobId);
+    afterActions.delete(jobId);
+    if (!list?.length) return;
+    // The library event may arrive after the download event
+    if (!trackById(trackId)) get().setLibrary(await api.getLibrary());
+    for (const a of list) {
+      if (a.playlistId) {
+        get().setLibrary(await api.addToPlaylist(a.playlistId, [trackId]));
+        const name = get().library.playlists.find((p) => p.id === a.playlistId)?.name;
+        if (name) get().showToast(`'${name}'에 추가했어요`);
+      }
+      if (a.like) get().setLibrary(await api.setLiked([trackId], true));
+      if (a.queue === "next") get().playNext([trackId]);
+      if (a.queue === "end") get().addToQueue([trackId]);
+      if (a.play) {
+        const t = trackById(trackId);
+        get().playTracks([trackId], 0, t?.title ?? "");
+      }
+    }
+  };
+
   const updateJob = (jobId: string, patch: Partial<DownloadJob>) => {
     const job = get().downloads[jobId];
     if (job) set({ downloads: { ...get().downloads, [jobId]: { ...job, ...patch } } });
@@ -329,6 +356,7 @@ export const useStore = create<State & Actions>((set, get) => {
     duration: 0,
     playback: readJson("playback", defaultPlayback),
     sleep: null,
+    tools: {},
 
     init: async () => {
       engine.setVolume(get().volume);
@@ -360,14 +388,17 @@ export const useStore = create<State & Actions>((set, get) => {
 
       api.repairLibrary().catch(() => {});
       listen("library-changed", async () => get().setLibrary(await api.getLibrary()));
-      listen<{ status: string; jobId: string; progress?: number; message?: string; trackId?: string }>("download", ({ payload: p }) =>
+      listen<{ status: string; jobId: string; progress?: number; message?: string; trackId?: string }>("download", ({ payload: p }) => {
         updateJob(p.jobId, {
           status: p.status as DownloadJob["status"],
           progress: p.progress ?? get().downloads[p.jobId]?.progress ?? 0,
           message: p.message,
           trackId: p.trackId,
-        }),
-      );
+        });
+        if (p.status === "done" && p.trackId) runAfter(p.jobId, p.trackId);
+        if (p.status === "error") afterActions.delete(p.jobId);
+      });
+      listen<ToolEvent>("tools", ({ payload }) => set({ tools: { ...get().tools, [payload.tool]: payload } }));
       window.addEventListener("beforeunload", saveSession);
     },
 
@@ -520,10 +551,19 @@ export const useStore = create<State & Actions>((set, get) => {
       load(id);
     },
 
-    startDownload: ({ key, ...req }) => {
+    startDownload: ({ key, after, ...req }) => {
       const existing = Object.values(get().downloads).find((d) => d.key === key && d.status !== "error");
-      if (existing) return existing.jobId;
+      if (existing) {
+        if (after) {
+          if (existing.status === "done" && existing.trackId) {
+            afterActions.set(existing.jobId, [after]);
+            runAfter(existing.jobId, existing.trackId);
+          } else afterActions.set(existing.jobId, [...(afterActions.get(existing.jobId) ?? []), after]);
+        }
+        return existing.jobId;
+      }
       const jobId = crypto.randomUUID();
+      if (after) afterActions.set(jobId, [after]);
       downloadRequests.set(jobId, req);
       set({
         downloads: {

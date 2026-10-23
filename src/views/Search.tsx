@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { Check, Download, Link2, Loader2, Pause, Play, RotateCcw } from "lucide-react";
+import { Check, CirclePlus, Download, Link2, Loader2, Pause, Play, RotateCcw } from "lucide-react";
 import { api, formatTime, isYoutubeUrl } from "../api";
 import { useStore } from "../store";
-import type { CatalogAlbum, CatalogTrack, DownloadJob, Track, YtResult } from "../types";
+import type { AfterDownload, CatalogAlbum, CatalogTrack, DownloadJob, Track, YtResult } from "../types";
 import { TrackTable } from "../components/TrackTable";
-import { InstallYtdlpButton, installHint, useToolStatus } from "../components/ToolSetup";
+import { TrackMenu } from "../components/ContextMenu";
+import { DownloadMenu } from "../components/DownloadMenu";
+import { RetryToolsButton, useToolStatus } from "../components/ToolSetup";
 
 type Tab = "all" | "songs" | "albums" | "youtube" | "library";
 
@@ -36,39 +38,83 @@ export function parseYtTitle(r: YtResult) {
 }
 
 export function DlButton({
-  job, inLibrary, onStart, onPlay,
-}: { job?: DownloadJob; inLibrary?: Track; onStart: () => void; onPlay?: () => void }) {
+  job, inLibrary, onStart, onPlay, compact,
+}: { job?: DownloadJob; inLibrary?: Track; onStart: () => void; onPlay?: () => void; compact?: boolean }) {
   const { current, playing } = useStore();
+  const icon = compact ? " icon" : "";
   if (inLibrary || job?.status === "done") {
     const isCur = inLibrary && current === inLibrary.id;
+    const Icon = isCur && playing ? Pause : isCur ? Play : Check;
     return (
-      <button className="dl-btn done" onClick={onPlay}>
-        {isCur && playing ? <Pause size={14} /> : isCur ? <Play size={14} /> : <Check size={14} />}
-        {isCur ? (playing ? "재생 중" : "일시정지") : "보관됨"}
+      <button className={`dl-btn done${icon}`} onClick={onPlay} title={isCur ? undefined : "보관됨 · 눌러서 재생"}>
+        <Icon size={14} />
+        {!compact && (isCur ? (playing ? "재생 중" : "일시정지") : "보관됨")}
       </button>
     );
   }
   if (job?.status === "error")
     return (
-      <button className="dl-btn err" onClick={onStart} title={job.message}>
-        <RotateCcw size={14} /> 재시도
+      <button className={`dl-btn err${icon}`} onClick={onStart} title={job.message}>
+        <RotateCcw size={14} /> {!compact && "재시도"}
       </button>
     );
   if (job)
     return (
-      <span className="dl-btn busy">
+      <span className={`dl-btn busy${icon}`} title="받는 중">
         {job.status === "downloading" && job.progress > 0 ? <Ring pct={job.progress} /> : <Loader2 size={14} className="spin" />}
-        {job.status === "searching"
-          ? "음원 찾는 중"
-          : job.status === "queued" || job.status === "pending"
-            ? "대기 중"
-            : `${Math.round(job.progress)}%`}
+        {!compact &&
+          (job.status === "searching"
+            ? "음원 찾는 중"
+            : job.status === "queued" || job.status === "pending"
+              ? "대기 중"
+              : `${Math.round(job.progress)}%`)}
       </span>
     );
   return (
-    <button className="dl-btn" onClick={onStart}>
-      <Download size={14} /> 받기
+    <button className={`dl-btn${icon}`} onClick={onStart} title="받기">
+      <Download size={14} /> {!compact && "받기"}
     </button>
+  );
+}
+
+/** ⊕ menu + download button for a search result (or the regular song menu once it's in the library). */
+export function ResultActions({
+  title, owned, job, onStart, compact,
+}: {
+  title: string;
+  owned?: Track;
+  job?: DownloadJob;
+  onStart: (after?: AfterDownload) => void;
+  compact?: boolean;
+}) {
+  const playOrToggle = useStore((s) => s.playOrToggle);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  return (
+    <div className="res-actions" onDoubleClick={(e) => e.stopPropagation()}>
+      <button
+        className="icon-btn"
+        title={owned ? "더 보기" : "받고 담기"}
+        onClick={(e) => {
+          e.stopPropagation();
+          setMenu({ x: e.clientX, y: e.clientY });
+        }}
+      >
+        <CirclePlus size={18} />
+      </button>
+      <DlButton
+        compact={compact}
+        job={job}
+        inLibrary={owned}
+        onStart={() => onStart()}
+        onPlay={() => owned && playOrToggle([owned.id], 0, owned.title)}
+      />
+      {menu &&
+        (owned ? (
+          <TrackMenu menu={{ x: menu.x, y: menu.y, tracks: [owned] }} onClose={() => setMenu(null)} />
+        ) : (
+          <DownloadMenu x={menu.x} y={menu.y} title={title} onPick={onStart} onClose={() => setMenu(null)} />
+        ))}
+    </div>
   );
 }
 
@@ -95,8 +141,9 @@ export function SearchView({ query = "" }: { query?: string }) {
   const [linked, setLinked] = useState<YtResult[] | null>(null);
   const [loading, setLoading] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const { tools, refresh: refreshTools } = useToolStatus();
-  const ytdlpMissing = tools !== null && !tools.ytdlp;
+  const { tools } = useToolStatus();
+  const ytdlpEvent = s.tools["yt-dlp"];
+  const ytdlpMissing = tools !== null && !tools.ytdlp && ytdlpEvent?.stage === "error";
   const isUrl = isYoutubeUrl(query);
 
   useEffect(() => {
@@ -142,17 +189,17 @@ export function SearchView({ query = "" }: { query?: string }) {
   const libMatches = q && !isUrl ? s.library.tracks.filter((t) => norm(`${t.title} ${t.artist} ${t.album}`).includes(q)) : [];
 
   const playOne = (t?: Track) => t && s.playOrToggle([t.id], 0, t.title);
-  const downloadCatalog = (c: CatalogTrack) =>
+  const downloadCatalog = (c: CatalogTrack, after?: AfterDownload) =>
     s.startDownload({
       key: catalogKey(c), title: c.title, artist: c.artist, album: c.album, artwork: c.artwork, duration: c.duration,
-      trackNumber: c.trackNumber, discNumber: c.discNumber, year: c.year, genre: c.genre,
+      trackNumber: c.trackNumber, discNumber: c.discNumber, year: c.year, genre: c.genre, after,
     });
-  const downloadYt = (r: YtResult) => {
+  const downloadYt = (r: YtResult, after?: AfterDownload) => {
     const p = parseYtTitle(r);
-    s.startDownload({ key: r.id, youtubeId: r.id, title: p.title, artist: p.artist, duration: r.duration });
+    s.startDownload({ key: r.id, youtubeId: r.id, title: p.title, artist: p.artist, duration: r.duration, after });
   };
 
-  const catalogRow = (c: CatalogTrack, i: number) => {
+  const catalogRow = (c: CatalogTrack, i: number, compact = false) => {
     const key = catalogKey(c);
     const owned = libByKey.get(key) ?? trackById(jobFor(key)?.trackId);
     return (
@@ -172,7 +219,13 @@ export function SearchView({ query = "" }: { query?: string }) {
           )}
         </div>
         <div className="dur">{formatTime(c.duration)}</div>
-        <DlButton job={jobFor(key)} inLibrary={owned} onStart={() => downloadCatalog(c)} onPlay={() => playOne(owned)} />
+        <ResultActions
+          compact={compact}
+          title={c.title}
+          owned={owned}
+          job={jobFor(key)}
+          onStart={(after) => downloadCatalog(c, after)}
+        />
       </div>
     );
   };
@@ -190,7 +243,7 @@ export function SearchView({ query = "" }: { query?: string }) {
         </div>
         <div className="s album">{r.channel.endsWith(" - Topic") ? "공식 음원 (Topic)" : ""}</div>
         <div className="dur">{formatTime(r.duration)}</div>
-        <DlButton job={jobFor(r.id)} inLibrary={owned} onStart={() => downloadYt(r)} onPlay={() => playOne(owned)} />
+        <ResultActions title={r.title} owned={owned} job={jobFor(r.id)} onStart={(after) => downloadYt(r, after)} />
       </div>
     );
   };
@@ -213,10 +266,8 @@ export function SearchView({ query = "" }: { query?: string }) {
 
   const missing = ytdlpMissing && (
     <div className="notice notice-row">
-      <span>
-        곡을 받으려면 yt-dlp가 필요해요. 버튼으로 바로 설치하거나 터미널에서 <code>{installHint("yt-dlp")}</code> 를 실행하세요.
-      </span>
-      <InstallYtdlpButton onDone={refreshTools} />
+      <span>음원 다운로더(yt-dlp)를 자동으로 설치하지 못했어요. 인터넷 연결을 확인하고 다시 시도해주세요.</span>
+      <RetryToolsButton />
     </div>
   );
 
@@ -255,7 +306,7 @@ export function SearchView({ query = "" }: { query?: string }) {
               링크에서 가져오기
             </h2>
             {linked && linked.length > 1 && (
-              <button className="dl-btn" disabled={!notOwned.length} onClick={() => notOwned.forEach(downloadYt)}>
+              <button className="dl-btn" disabled={!notOwned.length} onClick={() => notOwned.forEach((r) => downloadYt(r))}>
                 <Download size={14} /> {notOwned.length ? `${notOwned.length}곡 모두 받기` : "모두 보관됨"}
               </button>
             )}
@@ -266,7 +317,7 @@ export function SearchView({ query = "" }: { query?: string }) {
               <div>링크 정보를 불러오는 중…</div>
             </div>
           )}
-          {linked?.map(ytRow)}
+          {linked?.map((r) => ytRow(r))}
         </div>
       </div>
     );
@@ -322,7 +373,11 @@ export function SearchView({ query = "" }: { query?: string }) {
                           )}
                         </button>
                       ) : (
-                        <DlButton job={jobFor(catalogKey(top))} onStart={() => downloadCatalog(top)} />
+                        <ResultActions
+                          title={top.title}
+                          job={jobFor(catalogKey(top))}
+                          onStart={(after) => downloadCatalog(top, after)}
+                        />
                       )}
                     </div>
                   </div>
@@ -332,7 +387,7 @@ export function SearchView({ query = "" }: { query?: string }) {
                     <h2>곡</h2>
                     <button onClick={() => setTab("songs")}>모두 표시</button>
                   </div>
-                  {catalog.slice(1, 5).map(catalogRow)}
+                  {catalog.slice(1, 5).map((c, i) => catalogRow(c, i, true))}
                 </div>
               </div>
             )}
@@ -360,7 +415,7 @@ export function SearchView({ query = "" }: { query?: string }) {
                   <h2>YouTube</h2>
                   <button onClick={() => setTab("youtube")}>모두 표시</button>
                 </div>
-                {yt.slice(0, 5).map(ytRow)}
+                {yt.slice(0, 5).map((r) => ytRow(r))}
               </>
             )}
             {loading === 0 && !catalog.length && !yt.length && !libMatches.length && !albums.length && (
@@ -376,7 +431,7 @@ export function SearchView({ query = "" }: { query?: string }) {
             <div className="section-title">
               <h2>곡</h2>
             </div>
-            {catalog.map(catalogRow)}
+            {catalog.map((c, i) => catalogRow(c, i))}
           </>
         )}
         {tab === "albums" && (
@@ -392,7 +447,7 @@ export function SearchView({ query = "" }: { query?: string }) {
             <div className="section-title">
               <h2>YouTube 검색 결과</h2>
             </div>
-            {yt.map(ytRow)}
+            {yt.map((r) => ytRow(r))}
           </>
         )}
       </div>

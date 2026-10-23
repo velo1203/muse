@@ -2,9 +2,9 @@ import { useEffect, useState } from "react";
 import { Download, Loader2 } from "lucide-react";
 import { api, formatTime } from "../api";
 import { useStore } from "../store";
-import type { CatalogAlbum, CatalogTrack } from "../types";
+import type { AfterDownload, CatalogAlbum, CatalogTrack } from "../types";
 import { Page } from "../components/Hero";
-import { DlButton, catalogKey } from "./Search";
+import { ResultActions, catalogKey } from "./Search";
 
 /** An album from the online catalog; songs can be downloaded one by one or all at once. */
 export function CatalogAlbumView({ id }: { id: number }) {
@@ -25,8 +25,9 @@ export function CatalogAlbumView({ id }: { id: number }) {
     s.library.tracks.find((t) => catalogKey(t) === catalogKey(c)) ??
     s.library.tracks.find((t) => t.id === Object.values(s.downloads).find((d) => d.key === catalogKey(c))?.trackId);
   const jobFor = (c: CatalogTrack) => Object.values(s.downloads).filter((d) => d.key === catalogKey(c)).pop();
-  const download = (c: CatalogTrack) =>
+  const download = (c: CatalogTrack, after?: AfterDownload) =>
     s.startDownload({
+      after,
       key: catalogKey(c),
       title: c.title,
       artist: c.artist,
@@ -55,7 +56,7 @@ export function CatalogAlbumView({ id }: { id: number }) {
       onPlay={ownedIds.length ? () => s.playTracks(ownedIds, 0, `${album.title} — ${album.artist}`) : undefined}
       actions={
         <>
-          <button className="pill-btn" style={{ marginTop: 0 }} disabled={!missing.length} onClick={() => missing.forEach(download)}>
+          <button className="pill-btn" style={{ marginTop: 0 }} disabled={!missing.length} onClick={() => missing.forEach((c) => download(c))}>
             <Download size={16} style={{ verticalAlign: -3, marginRight: 6 }} />
             {missing.length ? `${missing.length}곡 모두 받기` : "모두 보관됨"}
           </button>
@@ -78,7 +79,7 @@ export function CatalogAlbumView({ id }: { id: number }) {
                 <div className="s">{c.artist}</div>
               </div>
               <div className="dur">{formatTime(c.duration)}</div>
-              <DlButton job={jobFor(c)} inLibrary={t} onStart={() => download(c)} onPlay={() => t && s.playOrToggle([t.id], 0, t.title)} />
+              <ResultActions title={c.title} owned={t} job={jobFor(c)} onStart={(after) => download(c, after)} />
             </div>
           );
         })}

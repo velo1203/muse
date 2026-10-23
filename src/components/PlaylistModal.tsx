@@ -4,7 +4,15 @@ import { useStore } from "../store";
 import type { Playlist } from "../types";
 
 /** Create a playlist (optionally pre-filled with tracks), or edit one when `playlist` is given. */
-export function PlaylistModal({ playlist, trackIds, onClose }: { playlist?: Playlist; trackIds?: string[]; onClose: () => void }) {
+export function PlaylistModal({
+  playlist, trackIds, onCreated, onClose,
+}: {
+  playlist?: Playlist;
+  trackIds?: string[];
+  /** Called with the new playlist's id (e.g. to add a song once it finishes downloading) */
+  onCreated?: (id: string) => void;
+  onClose: () => void;
+}) {
   const { library, setLibrary, navigate, showToast } = useStore();
   const [name, setName] = useState(playlist?.name ?? `내 플레이리스트 #${library.playlists.length + 1}`);
   const [desc, setDesc] = useState(playlist?.description ?? "");
@@ -18,7 +26,8 @@ export function PlaylistModal({ playlist, trackIds, onClose }: { playlist?: Play
       const created = lib.playlists[lib.playlists.length - 1];
       if (desc.trim()) lib = await api.updatePlaylist(created.id, created.name, desc.trim());
       setLibrary(lib);
-      if (trackIds?.length) showToast(`'${created.name}'에 ${trackIds.length}곡을 담았어요`);
+      if (onCreated) onCreated(created.id);
+      else if (trackIds?.length) showToast(`'${created.name}'에 ${trackIds.length}곡을 담았어요`);
       else navigate({ kind: "playlist", id: created.id });
     }
     onClose();

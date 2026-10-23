@@ -91,7 +91,9 @@ export default function App() {
       {modal?.kind === "editTrack" && (
         <EditTrackModal key={modal.trackId} trackId={modal.trackId} initialTab={modal.tab} onClose={() => openModal(null)} />
       )}
-      {modal?.kind === "newPlaylist" && <PlaylistModal trackIds={modal.trackIds} onClose={() => openModal(null)} />}
+      {modal?.kind === "newPlaylist" && (
+        <PlaylistModal trackIds={modal.trackIds} onCreated={modal.onCreated} onClose={() => openModal(null)} />
+      )}
       {fileDrag && (
         <div className="file-drop">
           <FolderInput size={40} />

@@ -2,6 +2,7 @@ mod catalog;
 mod library;
 mod lyrics;
 mod media;
+mod tools;
 mod ytdlp;
 
 use catalog::{CatalogAlbum, CatalogTrack};
@@ -42,13 +43,15 @@ async fn catalog_album(id: u64) -> Result<AlbumDetail, String> {
 }
 
 #[tauri::command]
-async fn youtube_search(query: String) -> Result<Vec<ytdlp::YtResult>, String> {
+async fn youtube_search(app: AppHandle, query: String) -> Result<Vec<ytdlp::YtResult>, String> {
+    tools::ensure_ytdlp(&app).await?;
     ytdlp::search(&query, 15).await
 }
 
 /// Entries behind a pasted YouTube video / playlist link.
 #[tauri::command]
-async fn resolve_url(url: String) -> Result<Vec<ytdlp::YtResult>, String> {
+async fn resolve_url(app: AppHandle, url: String) -> Result<Vec<ytdlp::YtResult>, String> {
+    tools::ensure_ytdlp(&app).await?;
     ytdlp::resolve_url(&url).await
 }
 
@@ -61,10 +64,12 @@ struct ToolStatus {
     os: &'static str,
 }
 
-/// Fetches yt-dlp into the app's own tools folder (no Homebrew / winget needed).
+/// Installs whatever external tools are missing (also runs automatically at startup).
 #[tauri::command]
-async fn install_ytdlp() -> Result<String, String> {
-    ytdlp::install_ytdlp().await.map(|p| p.display().to_string())
+async fn install_tools(app: AppHandle) -> Result<(), String> {
+    tools::ensure_ytdlp(&app).await?;
+    tools::ensure_ffmpeg(&app).await?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -129,6 +134,7 @@ async fn download_track(app: AppHandle, store: State<'_, SharedStore>, req: Down
 
 async fn find_source(app: &AppHandle, job_id: &str, title: &str, artist: &str, duration: Option<f64>) -> Result<String, String> {
     emit(app, DownloadEvent::Searching { job_id: job_id.into() });
+    tools::ensure_ytdlp(app).await?;
     let results = ytdlp::search(&format!("{artist} {title} audio"), 10).await?;
     ytdlp::best_match(&results, title, artist, duration)
         .map(|r| r.id.clone())
@@ -138,6 +144,11 @@ async fn find_source(app: &AppHandle, job_id: &str, title: &str, artist: &str, d
 /// Downloads `youtube_id` into the music folder under `file_stem`, reporting progress for `job_id`.
 async fn fetch_audio(app: &AppHandle, music_dir: &Path, file_stem: &str, quality: &str, job_id: &str, youtube_id: &str) -> Result<ytdlp::Downloaded, String> {
     emit(app, DownloadEvent::Queued { job_id: job_id.into() });
+    tools::ensure_ytdlp(app).await?;
+    if quality != "best" {
+        // MP3 / M4A conversion needs ffmpeg
+        tools::ensure_ffmpeg(app).await?;
+    }
     let _slot = DOWNLOAD_SLOTS.acquire().await.map_err(|e| e.to_string())?;
     emit(app, DownloadEvent::Downloading { job_id: job_id.into(), progress: 0.0, youtube_id: youtube_id.into() });
     let (a, j, y) = (app.clone(), job_id.to_string(), youtube_id.to_string());
@@ -301,6 +312,8 @@ async fn first_cover(urls: &[String], dest: &Path) -> Option<String> {
 /// Copies audio files into the library, reading their tags and embedded artwork.
 #[tauri::command]
 async fn import_files(app: AppHandle, store: State<'_, SharedStore>, paths: Vec<String>) -> Result<usize, String> {
+    // Tags, artwork and loudness are read with ffprobe / ffmpeg
+    let _ = tools::ensure_ffmpeg(&app).await;
     let (music_dir, covers_dir) = {
         let s = store.lock().await;
         (s.music_dir(), s.covers_dir())
@@ -656,6 +669,8 @@ pub fn run() {
             let root = app.path().app_data_dir()?;
             ytdlp::set_bin_dir(root.join("bin"));
             app.manage::<SharedStore>(Arc::new(Mutex::new(Store::load(root))));
+            // Install missing yt-dlp / ffmpeg in the background on first run
+            tauri::async_runtime::spawn(tools::ensure_all(app.handle().clone()));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -665,7 +680,7 @@ pub fn run() {
             youtube_search,
             resolve_url,
             tool_status,
-            install_ytdlp,
+            install_tools,
             download_track,
             replace_source,
             import_files,

@@ -4,6 +4,7 @@ import { api, groupAlbums, groupArtists } from "../api";
 import { useStore } from "../store";
 import { Cover, LikedArt, PlaylistArt, SongsArt } from "./Art";
 import { TRACKS_MIME } from "./TrackTable";
+import { ToolInstallStatus } from "./ToolSetup";
 
 type Tab = "playlists" | "artists" | "albums";
 
@@ -193,6 +194,7 @@ export function Sidebar() {
           <div className="side-empty">아직 없어요. 곡을 받으면 여기에 정리돼요.</div>
         )}
       </div>
+      <ToolInstallStatus />
     </nav>
   );
 }

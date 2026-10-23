@@ -2,7 +2,7 @@ import { openPath } from "@tauri-apps/plugin-opener";
 import { open } from "@tauri-apps/plugin-dialog";
 import { FolderInput } from "lucide-react";
 import { importPaths } from "../importFiles";
-import { InstallYtdlpButton, installHint, useToolStatus } from "../components/ToolSetup";
+import { RetryToolsButton, useToolStatus } from "../components/ToolSetup";
 import { api } from "../api";
 import { useStore } from "../store";
 import type { Quality } from "../types";
@@ -33,7 +33,7 @@ const OPTIONS: { value: Quality; title: string; desc: string; rec?: boolean }[] 
 
 export function Settings() {
   const { library, setLibrary, playback, setPlayback } = useStore();
-  const { tools, refresh } = useToolStatus();
+  const { tools } = useToolStatus();
 
   return (
     <div className="main-scroll">
@@ -144,18 +144,21 @@ export function Settings() {
         </div>
 
         <h3>도구</h3>
+        <div className="s" style={{ color: "var(--text-subdued)", fontSize: 13, marginBottom: 4 }}>
+          음원 다운로드와 변환에 쓰는 도구예요. 없으면 앱이 알아서 설치하고, yt-dlp는 일주일마다 자동으로 업데이트돼요.
+        </div>
         <div className="setting-row">
           <div>
             <div className="t">yt-dlp</div>
-            <div className="s mono">{tools ? tools.ytdlp ?? `설치되지 않음 — ${installHint("yt-dlp")}` : "…"}</div>
+            <div className="s mono">{tools ? tools.ytdlp ?? "설치되지 않음 (자동 설치 대기 중)" : "…"}</div>
           </div>
-          {tools && !tools.ytdlp && <InstallYtdlpButton onDone={refresh} />}
+          {tools && (!tools.ytdlp || !tools.ffmpeg) && <RetryToolsButton />}
         </div>
         <div className="setting-row">
           <div>
             <div className="t">ffmpeg</div>
             <div className="s mono">
-              {tools ? tools.ffmpeg ?? `설치되지 않음 — ${installHint("ffmpeg")} (MP3/M4A 변환·볼륨 측정·파일 가져오기에 필요)` : "…"}
+              {tools ? tools.ffmpeg ?? "설치되지 않음 (자동 설치 대기 중)" : "…"}
             </div>
           </div>
         </div>

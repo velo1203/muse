@@ -29,11 +29,12 @@ fn extra_dirs() -> Vec<PathBuf> {
 fn find_binary(name: &str) -> Option<PathBuf> {
     let file = format!("{name}{}", std::env::consts::EXE_SUFFIX);
     let path_dirs = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect::<Vec<_>>()).unwrap_or_default();
+    // Debug builds can pretend nothing is installed system-wide, to exercise the auto-installer
+    let system = !(cfg!(debug_assertions) && std::env::var_os("MUSE_IGNORE_SYSTEM_TOOLS").is_some());
     bin_dir()
         .cloned()
         .into_iter()
-        .chain(path_dirs)
-        .chain(extra_dirs())
+        .chain(path_dirs.into_iter().chain(extra_dirs()).filter(|_| system))
         .map(|d| d.join(&file))
         .find(|p| p.is_file())
 }
@@ -62,34 +63,6 @@ pub fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
     cmd
 }
 
-/// Downloads the standalone yt-dlp build for this OS into the app's tools folder.
-pub async fn install_ytdlp() -> Result<PathBuf, String> {
-    let asset = if cfg!(windows) {
-        "yt-dlp.exe"
-    } else if cfg!(target_os = "macos") {
-        "yt-dlp_macos"
-    } else {
-        "yt-dlp_linux"
-    };
-    let dir = bin_dir().ok_or("도구 폴더를 찾을 수 없습니다")?;
-    tokio::fs::create_dir_all(dir).await.map_err(|e| e.to_string())?;
-    let url = format!("https://github.com/yt-dlp/yt-dlp/releases/latest/download/{asset}");
-    let bytes = reqwest::get(&url)
-        .await
-        .and_then(|r| r.error_for_status())
-        .map_err(|e| format!("yt-dlp 다운로드 실패: {e}"))?
-        .bytes()
-        .await
-        .map_err(|e| e.to_string())?;
-    let dest = dir.join(format!("yt-dlp{}", std::env::consts::EXE_SUFFIX));
-    tokio::fs::write(&dest, &bytes).await.map_err(|e| e.to_string())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        tokio::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755)).await.map_err(|e| e.to_string())?;
-    }
-    Ok(dest)
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
