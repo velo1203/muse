@@ -1,24 +1,40 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::OnceLock;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
-/// GUI apps on macOS don't inherit the shell PATH, so check the usual install locations.
-const SEARCH_DIRS: &[&str] = &["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"];
+/// App-local tools folder (`<app data>/bin`), checked before the system PATH.
+static BIN_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn set_bin_dir(dir: PathBuf) {
+    let _ = BIN_DIR.set(dir);
+}
+
+pub fn bin_dir() -> Option<&'static PathBuf> {
+    BIN_DIR.get()
+}
+
+/// GUI apps don't inherit the shell PATH (macOS) and winget links live in a per-user
+/// folder (Windows), so check the usual install locations as well.
+fn extra_dirs() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"].iter().map(PathBuf::from).collect();
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+        dirs.push(Path::new(&local).join("Microsoft").join("WinGet").join("Links"));
+    }
+    dirs
+}
 
 fn find_binary(name: &str) -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("PATH") {
-        for dir in std::env::split_paths(&path) {
-            let candidate = dir.join(name);
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-    SEARCH_DIRS
-        .iter()
-        .map(|d| Path::new(d).join(name))
+    let file = format!("{name}{}", std::env::consts::EXE_SUFFIX);
+    let path_dirs = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect::<Vec<_>>()).unwrap_or_default();
+    bin_dir()
+        .cloned()
+        .into_iter()
+        .chain(path_dirs)
+        .chain(extra_dirs())
+        .map(|d| d.join(&file))
         .find(|p| p.is_file())
 }
 
@@ -28,6 +44,51 @@ pub fn ytdlp_path() -> Option<PathBuf> {
 
 pub fn ffmpeg_dir() -> Option<PathBuf> {
     find_binary("ffmpeg").and_then(|p| p.parent().map(Path::to_path_buf))
+}
+
+pub fn ffmpeg_tool(name: &str) -> Option<PathBuf> {
+    ffmpeg_dir().map(|d| d.join(format!("{name}{}", std::env::consts::EXE_SUFFIX)))
+}
+
+/// A command that never flashes a console window on Windows.
+pub fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    #[allow(unused_mut)]
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
+/// Downloads the standalone yt-dlp build for this OS into the app's tools folder.
+pub async fn install_ytdlp() -> Result<PathBuf, String> {
+    let asset = if cfg!(windows) {
+        "yt-dlp.exe"
+    } else if cfg!(target_os = "macos") {
+        "yt-dlp_macos"
+    } else {
+        "yt-dlp_linux"
+    };
+    let dir = bin_dir().ok_or("도구 폴더를 찾을 수 없습니다")?;
+    tokio::fs::create_dir_all(dir).await.map_err(|e| e.to_string())?;
+    let url = format!("https://github.com/yt-dlp/yt-dlp/releases/latest/download/{asset}");
+    let bytes = reqwest::get(&url)
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| format!("yt-dlp 다운로드 실패: {e}"))?
+        .bytes()
+        .await
+        .map_err(|e| e.to_string())?;
+    let dest = dir.join(format!("yt-dlp{}", std::env::consts::EXE_SUFFIX));
+    tokio::fs::write(&dest, &bytes).await.map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755)).await.map_err(|e| e.to_string())?;
+    }
+    Ok(dest)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,7 +103,7 @@ pub struct YtResult {
 
 pub async fn search(query: &str, limit: u32) -> Result<Vec<YtResult>, String> {
     let bin = ytdlp_path().ok_or("yt-dlp를 찾을 수 없습니다. `brew install yt-dlp`로 설치해주세요.")?;
-    let out = Command::new(bin)
+    let out = command(bin)
         .arg(format!("ytsearch{limit}:{query}"))
         .args(["--flat-playlist", "-J", "--no-warnings"])
         .output()
@@ -144,7 +205,7 @@ pub async fn download_audio(
 ) -> Result<Downloaded, String> {
     let bin = ytdlp_path().ok_or("yt-dlp를 찾을 수 없습니다. `brew install yt-dlp`로 설치해주세요.")?;
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let mut cmd = Command::new(bin);
+    let mut cmd = command(bin);
     cmd.arg(format!("https://www.youtube.com/watch?v={video_id}"))
         .arg("-o")
         .arg(dir.join(format!("{file_stem}.%(ext)s")))
@@ -218,8 +279,8 @@ pub async fn download_audio(
 
 /// Measures integrated loudness (LUFS) and true peak (dBTP) with ffmpeg's EBU R128 meter.
 pub async fn measure_loudness(path: &Path) -> Option<(f64, f64)> {
-    let ffmpeg = ffmpeg_dir()?.join("ffmpeg");
-    let out = Command::new(ffmpeg)
+    let ffmpeg = ffmpeg_tool("ffmpeg")?;
+    let out = command(ffmpeg)
         .args(["-hide_banner", "-nostats", "-i"])
         .arg(path)
         .args(["-af", "ebur128=peak=true:framelog=quiet", "-f", "null", "-"])
@@ -239,7 +300,7 @@ pub async fn measure_loudness(path: &Path) -> Option<(f64, f64)> {
 /// Lists the video(s) behind a YouTube link: a single video or every entry of a playlist.
 pub async fn resolve_url(url: &str) -> Result<Vec<YtResult>, String> {
     let bin = ytdlp_path().ok_or("yt-dlp를 찾을 수 없습니다. `brew install yt-dlp`로 설치해주세요.")?;
-    let out = Command::new(bin)
+    let out = command(bin)
         .arg(url)
         .args(["--flat-playlist", "-J", "--no-warnings"])
         .output()

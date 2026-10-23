@@ -1,8 +1,7 @@
 //! Reading tags / embedded artwork from local audio files with ffprobe + ffmpeg.
 
-use crate::ytdlp::ffmpeg_dir;
+use crate::ytdlp::{command, ffmpeg_tool};
 use std::path::Path;
-use tokio::process::Command;
 
 pub const AUDIO_EXTS: &[&str] = &["mp3", "m4a", "aac", "flac", "wav", "ogg", "opus", "webm", "aiff", "aif", "alac"];
 
@@ -20,10 +19,10 @@ pub struct Probe {
 }
 
 pub async fn probe(path: &Path) -> Probe {
-    let Some(ffprobe) = ffmpeg_dir().map(|d| d.join("ffprobe")) else {
+    let Some(ffprobe) = ffmpeg_tool("ffprobe") else {
         return Probe::default();
     };
-    let Ok(out) = Command::new(ffprobe)
+    let Ok(out) = command(ffprobe)
         .args(["-v", "quiet", "-print_format", "json", "-show_format", "-show_streams"])
         .arg(path)
         .output()
@@ -65,8 +64,8 @@ pub async fn probe(path: &Path) -> Probe {
 
 /// Extracts embedded cover art (if any) to `dest`.
 pub async fn extract_cover(path: &Path, dest: &Path) -> Option<String> {
-    let ffmpeg = ffmpeg_dir()?.join("ffmpeg");
-    let ok = Command::new(ffmpeg)
+    let ffmpeg = ffmpeg_tool("ffmpeg")?;
+    let ok = command(ffmpeg)
         .args(["-v", "quiet", "-y", "-i"])
         .arg(path)
         .args(["-an", "-frames:v", "1"])

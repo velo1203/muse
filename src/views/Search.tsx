@@ -4,6 +4,7 @@ import { api, formatTime, isYoutubeUrl } from "../api";
 import { useStore } from "../store";
 import type { CatalogAlbum, CatalogTrack, DownloadJob, Track, YtResult } from "../types";
 import { TrackTable } from "../components/TrackTable";
+import { InstallYtdlpButton, installHint, useToolStatus } from "../components/ToolSetup";
 
 type Tab = "all" | "songs" | "albums" | "youtube" | "library";
 
@@ -94,12 +95,9 @@ export function SearchView({ query = "" }: { query?: string }) {
   const [linked, setLinked] = useState<YtResult[] | null>(null);
   const [loading, setLoading] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [ytdlpMissing, setYtdlpMissing] = useState(false);
+  const { tools, refresh: refreshTools } = useToolStatus();
+  const ytdlpMissing = tools !== null && !tools.ytdlp;
   const isUrl = isYoutubeUrl(query);
-
-  useEffect(() => {
-    api.toolStatus().then((t) => setYtdlpMissing(!t.ytdlp));
-  }, []);
 
   useEffect(() => {
     const q = query.trim();
@@ -214,8 +212,11 @@ export function SearchView({ query = "" }: { query?: string }) {
   );
 
   const missing = ytdlpMissing && (
-    <div className="notice">
-      yt-dlp가 설치되어 있지 않아 다운로드할 수 없습니다. 터미널에서 <code>brew install yt-dlp ffmpeg</code> 를 실행한 뒤 앱을 다시 시작하세요.
+    <div className="notice notice-row">
+      <span>
+        곡을 받으려면 yt-dlp가 필요해요. 버튼으로 바로 설치하거나 터미널에서 <code>{installHint("yt-dlp")}</code> 를 실행하세요.
+      </span>
+      <InstallYtdlpButton onDone={refreshTools} />
     </div>
   );
 

@@ -1,11 +1,11 @@
-import { useEffect, useState } from "react";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { open } from "@tauri-apps/plugin-dialog";
 import { FolderInput } from "lucide-react";
 import { importPaths } from "../importFiles";
+import { InstallYtdlpButton, installHint, useToolStatus } from "../components/ToolSetup";
 import { api } from "../api";
 import { useStore } from "../store";
-import type { Quality, ToolStatus } from "../types";
+import type { Quality } from "../types";
 import { Equalizer } from "../components/Equalizer";
 import { Toggle } from "../components/Toggle";
 import { Select } from "../components/Select";
@@ -33,10 +33,7 @@ const OPTIONS: { value: Quality; title: string; desc: string; rec?: boolean }[] 
 
 export function Settings() {
   const { library, setLibrary, playback, setPlayback } = useStore();
-  const [tools, setTools] = useState<ToolStatus | null>(null);
-  useEffect(() => {
-    api.toolStatus().then(setTools);
-  }, []);
+  const { tools, refresh } = useToolStatus();
 
   return (
     <div className="main-scroll">
@@ -150,13 +147,16 @@ export function Settings() {
         <div className="setting-row">
           <div>
             <div className="t">yt-dlp</div>
-            <div className="s mono">{tools ? tools.ytdlp ?? "설치되지 않음 — brew install yt-dlp" : "…"}</div>
+            <div className="s mono">{tools ? tools.ytdlp ?? `설치되지 않음 — ${installHint("yt-dlp")}` : "…"}</div>
           </div>
+          {tools && !tools.ytdlp && <InstallYtdlpButton onDone={refresh} />}
         </div>
         <div className="setting-row">
           <div>
             <div className="t">ffmpeg</div>
-            <div className="s mono">{tools ? tools.ffmpeg ?? "설치되지 않음 — brew install ffmpeg" : "…"}</div>
+            <div className="s mono">
+              {tools ? tools.ffmpeg ?? `설치되지 않음 — ${installHint("ffmpeg")} (MP3/M4A 변환·볼륨 측정·파일 가져오기에 필요)` : "…"}
+            </div>
           </div>
         </div>
 
@@ -167,7 +167,7 @@ export function Settings() {
             <div className="s mono ellipsis">{tools?.libraryDir}</div>
           </div>
           <button className="dl-btn" onClick={() => tools && openPath(tools.libraryDir)}>
-            Finder에서 열기
+            {navigator.userAgent.includes("Windows") ? "탐색기에서 열기" : "Finder에서 열기"}
           </button>
         </div>
       </div>

@@ -58,6 +58,13 @@ struct ToolStatus {
     ytdlp: Option<String>,
     ffmpeg: Option<String>,
     library_dir: String,
+    os: &'static str,
+}
+
+/// Fetches yt-dlp into the app's own tools folder (no Homebrew / winget needed).
+#[tauri::command]
+async fn install_ytdlp() -> Result<String, String> {
+    ytdlp::install_ytdlp().await.map(|p| p.display().to_string())
 }
 
 #[tauri::command]
@@ -67,6 +74,7 @@ async fn tool_status(store: State<'_, SharedStore>) -> Result<ToolStatus, String
         ytdlp: ytdlp::ytdlp_path().map(|p| p.display().to_string()),
         ffmpeg: ytdlp::ffmpeg_dir().map(|p| p.display().to_string()),
         library_dir: root.display().to_string(),
+        os: std::env::consts::OS,
     })
 }
 
@@ -646,6 +654,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let root = app.path().app_data_dir()?;
+            ytdlp::set_bin_dir(root.join("bin"));
             app.manage::<SharedStore>(Arc::new(Mutex::new(Store::load(root))));
             Ok(())
         })
@@ -656,6 +665,7 @@ pub fn run() {
             youtube_search,
             resolve_url,
             tool_status,
+            install_ytdlp,
             download_track,
             replace_source,
             import_files,

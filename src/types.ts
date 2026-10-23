@@ -85,6 +85,8 @@ export interface ToolStatus {
   ytdlp: string | null;
   ffmpeg: string | null;
   libraryDir: string;
+  /** "macos" | "windows" | "linux" */
+  os: string;
 }
 
 export type DownloadStatus = "pending" | "queued" | "searching" | "downloading" | "done" | "error";

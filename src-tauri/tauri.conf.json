@@ -41,6 +41,25 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "category": "Music",
+    "shortDescription": "YouTube\uc5d0\uc11c \uc74c\uc6d0\uc744 \ucc3e\uc544 \ub4e3\ub294 \uac1c\uc778\uc6a9 \uc74c\uc545 \ud50c\ub808\uc774\uc5b4",
+    "copyright": "\u00a9 2026 hosung",
+    "windows": {
+      "nsis": {
+        "languages": [
+          "Korean",
+          "English"
+        ],
+        "displayLanguageSelector": false,
+        "installMode": "currentUser"
+      },
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    }
   }
 }

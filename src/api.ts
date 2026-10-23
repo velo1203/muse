@@ -33,6 +33,7 @@ export const api = {
   youtubeSearch: (query: string) => invoke<YtResult[]>("youtube_search", { query }),
   resolveUrl: (url: string) => invoke<YtResult[]>("resolve_url", { url }),
   toolStatus: () => invoke<ToolStatus>("tool_status"),
+  installYtdlp: () => invoke<string>("install_ytdlp"),
   downloadTrack: (req: DownloadRequest) => invoke<Track>("download_track", { req }),
   replaceSource: (jobId: string, trackId: string, youtubeId?: string) =>
     invoke<Library>("replace_source", { jobId, trackId, youtubeId }),
