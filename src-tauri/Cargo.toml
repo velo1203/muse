@@ -1,0 +1,31 @@
+[package]
+name = "muse"
+version = "0.1.0"
+description = "Muse — a desktop music player that sources audio from YouTube"
+authors = ["hosung"]
+edition = "2024"
+
+[lib]
+name = "muse_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["process", "io-util", "macros", "sync", "fs"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+uuid = { version = "1", features = ["v4"] }
+urlencoding = "2"
+tauri-plugin-dialog = "2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
