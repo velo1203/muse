@@ -2,13 +2,34 @@
 
 A Tauri + React desktop music player. It finds songs in the iTunes catalog (title, artist, album art), then downloads the matching audio from YouTube with `yt-dlp`.
 
-## Requirements
+## Install
 
-```bash
-brew install yt-dlp ffmpeg
-```
+Download the installer from [Releases](../../releases):
 
-## Run
+- **Windows**: `Muse_*_x64-setup.exe` (or the `.msi`)
+- **macOS**: `Muse_*_universal.dmg`, then drag Muse into Applications.
+  The app isn't signed with an Apple Developer certificate, so the first launch shows an
+  "unidentified developer" warning. Open it via System Settings → Privacy & Security → "Open Anyway".
+
+Muse needs **yt-dlp** to download songs. Use the "yt-dlp 자동 설치" button inside the app, or install it yourself.
+**ffmpeg** is needed for MP3/M4A conversion, loudness measurement and importing your own files.
+
+| | yt-dlp | ffmpeg |
+|---|---|---|
+| macOS | `brew install yt-dlp` | `brew install ffmpeg` |
+| Windows | `winget install yt-dlp.yt-dlp` | `winget install Gyan.FFmpeg` |
+
+## Disclaimer
+
+Muse is a personal, non-commercial project for learning and private listening.
+
+- It is not affiliated with YouTube, Apple or any music streaming service.
+- Downloading from YouTube may be against YouTube's Terms of Service. You are responsible for how you use this software.
+- All songs, lyrics and artwork belong to their respective rights holders. Please support artists through official channels.
+
+이 프로젝트는 개인 학습·감상용 비상업 프로젝트입니다. 유튜브 다운로드는 유튜브 약관에 어긋날 수 있으며, 사용에 따른 책임은 사용자에게 있습니다. 모든 음원·가사·앨범 아트의 저작권은 각 권리자에게 있습니다.
+
+## Develop
 
 ```bash
 npm install

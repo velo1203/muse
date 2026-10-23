@@ -1,7 +1,7 @@
 /*
  * Muse — design tokens.
- * Proportions follow Spotify's Encore system (pill buttons, 32/48/56px controls,
- * 4px inputs, 8px panels, 1.04 hover scale); colour and branding are Muse's own.
+ * Pill buttons, 32/48/56px controls, 4px inputs, 8px panels and a 1.04 hover scale,
+ * with a single coral accent.
  */
 :root {
   --bg-app: #0a090d;
@@ -419,7 +419,7 @@ img { display: block; }
 .q-row button { font-size: 14px; color: var(--text-subdued); font-weight: 700; }
 .q-row button:hover { color: var(--text); text-decoration: underline; }
 
-/* Player bar (flat, Spotify-like) */
+/* Player bar */
 .player {
   grid-area: player; display: grid; grid-template-columns: minmax(180px, 1fr) minmax(320px, 2fr) minmax(180px, 1fr);
   align-items: center; padding: 0 8px;
@@ -506,7 +506,7 @@ img { display: block; }
   font-size: 18px; font-weight: 700; color: var(--accent); pointer-events: none;
 }
 
-/* Settings: flat rows like Spotify's settings page */
+/* Settings: flat label / control rows */
 .settings h3 { font-size: 16px; font-weight: 700; margin: 40px 0 8px; color: var(--text); }
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 32px; padding: 12px 0; }
 .setting-row.disabled { opacity: .4; }

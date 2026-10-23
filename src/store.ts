@@ -159,7 +159,7 @@ interface SavedSession {
 export const useStore = create<State & Actions>((set, get) => {
   const trackById = (id: string | null | undefined) => get().library.tracks.find((t) => t.id === id);
 
-  /** dB of gain that brings a track to the target loudness (Spotify-style normalization). */
+  /** dB of gain that brings a track to the target loudness (loudness normalization). */
   const normalizationDb = (t: Track) => {
     const { normalize, volumeLevel } = get().playback;
     if (!normalize || t.loudness == null) return null;
