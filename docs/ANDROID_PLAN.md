@@ -3,12 +3,12 @@
 폰에 APK로 직접 설치해서 쓰는 개인용 뮤즈. 데스크톱과 같은 코드베이스(Tauri v2)에서
 화면·재생 엔진·라이브러리 로직을 공유하고, 다운로드처럼 플랫폼마다 다른 부분만 따로 구현한다.
 
-## 목표 0 — 개발 환경 & 빈 앱 실행
-- [ ] rustup + 안드로이드 타깃(aarch64, armv7, x86_64) 설치
-- [ ] Android NDK 설치
-- [ ] `tauri android init` 로 안드로이드 프로젝트 생성
-- [ ] 에뮬레이터에서 지금의 뮤즈 화면이 뜬다 (기능은 안 돼도 됨)
-- [ ] 디버그 APK 파일이 만들어진다
+## 목표 0 — 개발 환경 & 빈 앱 실행 ✅
+- [x] rustup + 안드로이드 타깃(aarch64, armv7, x86_64) 설치
+- [x] Android NDK 설치
+- [x] `tauri android init` 로 안드로이드 프로젝트 생성
+- [x] 에뮬레이터에서 지금의 뮤즈 화면이 뜬다 (기능은 안 돼도 됨)
+- [x] 디버그 APK 파일이 만들어진다
 
 **완료 기준:** 에뮬레이터에서 앱이 실행되고, 폰에 설치할 수 있는 APK가 나온다.
 
@@ -50,3 +50,9 @@
 - [ ] 설치 방법 README 에 추가
 
 **완료 기준:** Releases 에서 APK를 받아 폰에 설치하고, 새 버전을 덮어 설치해도 라이브러리가 유지된다.
+
+## 빌드 메모
+- 안드로이드 빌드는 rustup의 Rust를 써야 함 (Homebrew Rust에는 안드로이드 타깃이 없음):
+  `PATH=/opt/homebrew/opt/rustup/bin:$PATH`, `JAVA_HOME=/Applications/Android Studio.app/Contents/jbr/Contents/Home`,
+  `ANDROID_HOME=~/Library/Android/sdk`, `NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370`
+- 디버그 APK: `npx tauri android build --debug --apk --target aarch64`
