@@ -119,14 +119,16 @@ pub async fn album(id: u64) -> Result<(CatalogAlbum, Vec<CatalogTrack>), String>
 }
 
 /// Best catalog match for a song whose metadata came from a YouTube title.
-pub async fn lookup(title: &str, artist: &str) -> Option<CatalogTrack> {
+pub async fn lookup(title: &str, artist: &str, duration: Option<f64>) -> Option<CatalogTrack> {
     let results = search_songs(&format!("{artist} {title}")).await.ok()?;
     let t = title.to_lowercase();
-    results
-        .into_iter()
-        .find(|r| {
-            let rt = r.title.to_lowercase();
-            rt.contains(&t) || t.contains(&rt)
-        })
-        .filter(|r| !r.artwork.is_empty())
+    let same_title = |r: &CatalogTrack| {
+        let rt = r.title.to_lowercase();
+        rt.contains(&t) || t.contains(&rt)
+    };
+    // Korean titles often come back translated ("밤편지" → "Through the Night"), so a near-identical
+    // length among the top hits counts as the same song too
+    let same_length = |r: &CatalogTrack| matches!((duration, r.duration), (Some(d), Some(rd)) if (rd - d).abs() <= 3.0);
+    let found = results.iter().find(|r| same_title(r)).or_else(|| results.iter().take(3).find(|r| same_length(r)));
+    found.filter(|r| !r.artwork.is_empty()).cloned()
 }
