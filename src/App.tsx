@@ -23,6 +23,16 @@ import { HistoryView } from "./views/History";
 
 function Main() {
   const view = useStore((s) => s.view);
+  // A new key per destination replays the enter animation; search stays mounted while typing
+  return (
+    <div className="view" key={view.kind === "search" ? "search" : JSON.stringify(view)}>
+      <View />
+    </div>
+  );
+}
+
+function View() {
+  const view = useStore((s) => s.view);
   switch (view.kind) {
     case "home":
       return <Home />;

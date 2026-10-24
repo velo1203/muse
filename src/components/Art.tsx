@@ -2,6 +2,16 @@ import { Heart, ListMusic, Music } from "lucide-react";
 import { fileUrl } from "../api";
 import type { Playlist, Track } from "../types";
 
+/** Replays the heart pop on the clicked button's icon (the button's own class is re-rendered by React). */
+export function popIcon(e: React.MouseEvent<HTMLElement>) {
+  const icon = e.currentTarget.querySelector("svg");
+  if (!icon) return;
+  icon.classList.remove("pop");
+  void icon.getBoundingClientRect();
+  icon.classList.add("pop");
+  icon.addEventListener("animationend", () => icon.classList.remove("pop"), { once: true });
+}
+
 export function Cover({ src, className = "thumb", size = 20 }: { src?: string | null; className?: string; size?: number }) {
   return (
     <div className={className}>
