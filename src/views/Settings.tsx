@@ -9,6 +9,7 @@ import type { Quality } from "../types";
 import { Equalizer } from "../components/Equalizer";
 import { Toggle } from "../components/Toggle";
 import { Select } from "../components/Select";
+import { isMobile } from "../platform";
 import { Slider } from "../components/Slider";
 import type { VolumeLevel } from "../engine";
 
@@ -114,8 +115,8 @@ export function Settings() {
           <div>
             <div className="t">음악 파일 가져오기</div>
             <div className="s">
-              MP3, M4A, FLAC, WAV 등 갖고 있는 파일을 라이브러리로 복사해요. 태그와 앨범 커버도 함께 읽어요. 파일이나 폴더를 창에
-              끌어다 놓아도 돼요.
+              MP3, M4A, FLAC, WAV 등 갖고 있는 파일을 라이브러리로 복사해요. 태그와 앨범 커버도 함께 읽어요.
+              {!isMobile && " 파일이나 폴더를 창에 끌어다 놓아도 돼요."}
             </div>
           </div>
           <div className="row-ctrl">
@@ -131,40 +132,44 @@ export function Settings() {
             >
               <FolderInput size={14} /> 파일 선택
             </button>
-            <button
-              className="dl-btn"
-              onClick={async () => {
-                const dir = await open({ directory: true });
-                if (typeof dir === "string") importPaths([dir]);
-              }}
-            >
-              폴더 선택
-            </button>
+            {!isMobile && (
+              <button
+                className="dl-btn"
+                onClick={async () => {
+                  const dir = await open({ directory: true });
+                  if (typeof dir === "string") importPaths([dir]);
+                }}
+              >
+                폴더 선택
+              </button>
+            )}
           </div>
         </div>
 
         <h3>도구</h3>
         <div className="s" style={{ color: "var(--text-subdued)", fontSize: 13, marginBottom: 4 }}>
-          음원 다운로드와 변환에 쓰는 도구예요. 없으면 앱이 알아서 설치하고, yt-dlp는 일주일마다 자동으로 업데이트돼요.
+          {isMobile
+            ? "음원 다운로드에 쓰는 yt-dlp와 ffmpeg가 앱에 들어 있어요. yt-dlp는 일주일마다 자동으로 업데이트돼요."
+            : "음원 다운로드와 변환에 쓰는 도구예요. 없으면 앱이 알아서 설치하고, yt-dlp는 일주일마다 자동으로 업데이트돼요."}
         </div>
         <div className="setting-row">
           <div>
             <div className="t">yt-dlp</div>
             <div className="s mono">{tools ? tools.ytdlp ?? "설치되지 않음 (자동 설치 대기 중)" : "…"}</div>
           </div>
-          {tools && (!tools.ytdlp || !tools.ffmpeg) && <RetryToolsButton />}
+          {tools && (!tools.ytdlp || (!tools.ffmpeg && !isMobile)) && <RetryToolsButton />}
         </div>
         <div className="setting-row">
           <div>
             <div className="t">ffmpeg</div>
             <div className="s mono">
-              {tools ? tools.ffmpeg ?? "설치되지 않음 (자동 설치 대기 중)" : "…"}
+              {tools ? tools.ffmpeg ?? (isMobile ? "ffmpeg (내장)" : "설치되지 않음 (자동 설치 대기 중)") : "…"}
             </div>
           </div>
         </div>
 
-        <h3>저장 위치</h3>
-        <div className="setting-row">
+        {!isMobile && <h3>저장 위치</h3>}
+        {!isMobile && <div className="setting-row">
           <div style={{ minWidth: 0 }}>
             <div className="t">라이브러리 폴더</div>
             <div className="s mono ellipsis">{tools?.libraryDir}</div>
@@ -172,7 +177,7 @@ export function Settings() {
           <button className="dl-btn" onClick={() => tools && openPath(tools.libraryDir)}>
             {navigator.userAgent.includes("Windows") ? "탐색기에서 열기" : "Finder에서 열기"}
           </button>
-        </div>
+        </div>}
       </div>
     </div>
   );

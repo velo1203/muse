@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+#[cfg(not(target_os = "android"))]
 use std::process::Stdio;
 use std::sync::OnceLock;
 use std::time::Duration;
+#[cfg(not(target_os = "android"))]
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
@@ -40,6 +42,7 @@ fn find_binary(name: &str) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
+#[cfg_attr(target_os = "android", allow(dead_code))]
 /// Where Muse keeps its own yt-dlp on macOS / Windows: the folder build, which starts in a
 /// fraction of a second. The single-file build unpacks itself on every launch (~7 s each time).
 pub fn own_ytdlp() -> Option<PathBuf> {
@@ -53,11 +56,22 @@ pub fn own_ytdlp() -> Option<PathBuf> {
     Some(bin_dir()?.join("yt-dlp-dist").join(exe))
 }
 
+#[cfg(not(target_os = "android"))]
 pub fn ytdlp_path() -> Option<PathBuf> {
     own_ytdlp().filter(|p| p.is_file()).or_else(|| find_binary("yt-dlp"))
 }
 
+/// Android bundles yt-dlp inside the app (youtubedl-android).
+#[cfg(target_os = "android")]
+pub fn ytdlp_path() -> Option<PathBuf> {
+    Some(PathBuf::from("yt-dlp (내장)"))
+}
+
+/// On Android, ffmpeg lives inside the bundled yt-dlp runtime and can't be run directly.
 pub fn ffmpeg_dir() -> Option<PathBuf> {
+    if cfg!(target_os = "android") {
+        return None;
+    }
     find_binary("ffmpeg").and_then(|p| p.parent().map(Path::to_path_buf))
 }
 
@@ -90,28 +104,77 @@ pub struct YtResult {
     pub thumbnail: String,
 }
 
-/// How long a search / link lookup may take before it's reported as failed.
-const LISTING_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long a search / link lookup may take before it's reported as failed
+/// (phones start a Python runtime for every yt-dlp run, so they get longer).
+const LISTING_TIMEOUT: Duration = Duration::from_secs(if cfg!(target_os = "android") { 150 } else { 60 });
+
+/// What a yt-dlp run printed.
+pub struct RunOutput {
+    pub stdout: String,
+    pub stderr: String,
+    pub success: bool,
+}
+
+/// Runs yt-dlp with `args`. Download progress (from `--progress-template "download:PROG …"`
+/// on desktop, from the youtubedl-android callback on Android) is reported through `on_progress`.
+#[cfg(not(target_os = "android"))]
+pub async fn run(args: Vec<String>, mut on_progress: impl FnMut(f64)) -> Result<RunOutput, String> {
+    let bin = ytdlp_path().ok_or("yt-dlp를 찾을 수 없습니다")?;
+    let mut child = command(bin)
+        .args(&args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let stderr = child.stderr.take().unwrap();
+    let err_task = tokio::spawn(async move {
+        let mut lines = BufReader::new(stderr).lines();
+        let mut buf = String::new();
+        while let Ok(Some(l)) = lines.next_line().await {
+            buf.push_str(&l);
+            buf.push('\n');
+        }
+        buf
+    });
+    let mut stdout = String::new();
+    let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        if let Some(rest) = line.strip_prefix("PROG ") {
+            if let Ok(p) = rest.trim().trim_end_matches('%').trim().parse::<f64>() {
+                on_progress(p);
+            }
+            continue;
+        }
+        stdout.push_str(&line);
+        stdout.push('\n');
+    }
+    let status = child.wait().await.map_err(|e| e.to_string())?;
+    Ok(RunOutput { stdout, stderr: err_task.await.unwrap_or_default(), success: status.success() })
+}
+
+#[cfg(target_os = "android")]
+pub async fn run(args: Vec<String>, on_progress: impl FnMut(f64)) -> Result<RunOutput, String> {
+    let r = crate::android::ytdl_run(args, on_progress).await?;
+    Ok(RunOutput { stdout: r.out, stderr: r.err, success: r.exit_code == 0 })
+}
 
 /// Runs `yt-dlp --flat-playlist -J` on a search term or URL and parses its JSON.
-async fn flat_listing(bin: &Path, target: &str) -> Result<serde_json::Value, String> {
-    let run = command(bin)
-        .arg(target)
-        .args(["--flat-playlist", "-J", "--no-warnings", "--socket-timeout", "15"])
-        .output();
-    let out = tokio::time::timeout(LISTING_TIMEOUT, run)
+async fn flat_listing(target: &str) -> Result<serde_json::Value, String> {
+    let args = [target, "--flat-playlist", "-J", "--no-warnings", "--socket-timeout", "15"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let out = tokio::time::timeout(LISTING_TIMEOUT, run(args, |_| {}))
         .await
-        .map_err(|_| "YouTube 응답이 너무 늦어요. 인터넷 연결을 확인하고 다시 시도해주세요.".to_string())?
-        .map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        .map_err(|_| "YouTube 응답이 너무 늦어요. 인터넷 연결을 확인하고 다시 시도해주세요.".to_string())??;
+    if !out.success {
+        return Err(out.stderr.trim().to_string());
     }
-    serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())
+    serde_json::from_str(&out.stdout).map_err(|e| e.to_string())
 }
 
 pub async fn search(query: &str, limit: u32) -> Result<Vec<YtResult>, String> {
-    let bin = ytdlp_path().ok_or("yt-dlp를 찾을 수 없습니다. `brew install yt-dlp`로 설치해주세요.")?;
-    let json = flat_listing(&bin, &format!("ytsearch{limit}:{query}")).await?;
+    let json = flat_listing(&format!("ytsearch{limit}:{query}")).await?;
     let entries = json["entries"].as_array().cloned().unwrap_or_default();
     Ok(entries
         .iter()
@@ -199,80 +262,50 @@ pub async fn download_audio(
     dir: &Path,
     file_stem: &str,
     quality: &str,
-    mut on_progress: impl FnMut(f64),
+    on_progress: impl FnMut(f64),
 ) -> Result<Downloaded, String> {
-    let bin = ytdlp_path().ok_or("yt-dlp를 찾을 수 없습니다. `brew install yt-dlp`로 설치해주세요.")?;
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let mut cmd = command(bin);
-    cmd.arg(format!("https://www.youtube.com/watch?v={video_id}"))
-        .arg("-o")
-        .arg(dir.join(format!("{file_stem}.%(ext)s")))
-        .args([
-            "--no-playlist",
-            "--no-warnings",
-            "--newline",
-            "--socket-timeout",
-            "20",
-            "--progress",
-            "--no-simulate",
-            "--progress-template",
-            "download:PROG %(progress._percent_str)s",
-            "--print",
-            "after_move:DONE\t%(filepath)s\t%(acodec)s\t%(abr)s\t%(duration)s",
-        ]);
-    match quality {
+    let mut args: Vec<String> = vec![
+        format!("https://www.youtube.com/watch?v={video_id}"),
+        "-o".into(),
+        dir.join(format!("{file_stem}.%(ext)s")).display().to_string(),
+    ];
+    let common = [
+        "--no-playlist", "--no-warnings", "--newline", "--socket-timeout", "20", "--progress", "--no-simulate",
+        "--progress-template", "download:PROG %(progress._percent_str)s",
+        "--print", "after_move:DONE\t%(filepath)s\t%(acodec)s\t%(abr)s\t%(duration)s",
+    ];
+    let format: &[&str] = match quality {
         // Re-encode for players that can't handle Opus; quality 0 = highest VBR setting.
-        "mp3" => cmd.args(["-f", "bestaudio/best", "-x", "--audio-format", "mp3", "--audio-quality", "0"]),
-        "m4a" => cmd.args(["-f", "bestaudio[ext=m4a]/bestaudio/best", "-x", "--audio-format", "m4a", "--audio-quality", "0"]),
+        "mp3" => &["-f", "bestaudio/best", "-x", "--audio-format", "mp3", "--audio-quality", "0"],
+        "m4a" => &["-f", "bestaudio[ext=m4a]/bestaudio/best", "-x", "--audio-format", "m4a", "--audio-quality", "0"],
         // Highest bitrate stream YouTube offers, kept bit-for-bit (no transcoding loss).
-        _ => cmd.args(["-f", "bestaudio/best", "-S", "abr,asr"]),
+        _ => &["-f", "bestaudio/best", "-S", "abr,asr"],
     };
+    args.extend(common.iter().chain(format).map(|s| s.to_string()));
     if let Some(ff) = ffmpeg_dir() {
-        cmd.arg("--ffmpeg-location").arg(ff);
+        args.push("--ffmpeg-location".into());
+        args.push(ff.display().to_string());
     }
-    let mut child = cmd
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| e.to_string())?;
 
-    let stderr = child.stderr.take().unwrap();
-    let err_task = tokio::spawn(async move {
-        let mut lines = BufReader::new(stderr).lines();
-        let mut buf = String::new();
-        while let Ok(Some(l)) = lines.next_line().await {
-            buf.push_str(&l);
-            buf.push('\n');
-        }
-        buf
+    let out = run(args, on_progress).await?;
+    let done = out.stdout.lines().find_map(|line| {
+        let rest = line.strip_prefix("DONE\t")?;
+        let parts: Vec<&str> = rest.split('\t').collect();
+        let num = |i: usize| parts.get(i).and_then(|s| s.parse::<f64>().ok());
+        Some(Downloaded {
+            path: PathBuf::from(parts[0]),
+            codec: parts.get(1).filter(|s| **s != "NA").map(|s| s.to_string()),
+            bitrate: num(2),
+            duration: num(3),
+        })
     });
-
-    let mut done = None;
-    let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
-    while let Ok(Some(line)) = lines.next_line().await {
-        if let Some(rest) = line.strip_prefix("PROG ") {
-            if let Ok(p) = rest.trim().trim_end_matches('%').trim().parse::<f64>() {
-                on_progress(p);
-            }
-        } else if let Some(rest) = line.strip_prefix("DONE\t") {
-            let parts: Vec<&str> = rest.split('\t').collect();
-            let num = |i: usize| parts.get(i).and_then(|s| s.parse::<f64>().ok());
-            done = Some(Downloaded {
-                path: PathBuf::from(parts[0]),
-                codec: parts.get(1).filter(|s| **s != "NA").map(|s| s.to_string()),
-                bitrate: num(2),
-                duration: num(3),
-            });
-        }
-    }
-    let status = child.wait().await.map_err(|e| e.to_string())?;
-    let stderr = err_task.await.unwrap_or_default();
     match done {
-        Some(d) if status.success() && d.path.is_file() => Ok(d),
-        _ => Err(if stderr.trim().is_empty() {
+        Some(d) if out.success && d.path.is_file() => Ok(d),
+        _ => Err(if out.stderr.trim().is_empty() {
             "다운로드에 실패했습니다".into()
         } else {
-            stderr.trim().to_string()
+            out.stderr.trim().to_string()
         }),
     }
 }
@@ -299,8 +332,7 @@ pub async fn measure_loudness(path: &Path) -> Option<(f64, f64)> {
 
 /// Lists the video(s) behind a YouTube link: a single video or every entry of a playlist.
 pub async fn resolve_url(url: &str) -> Result<Vec<YtResult>, String> {
-    let bin = ytdlp_path().ok_or("yt-dlp를 찾을 수 없습니다. `brew install yt-dlp`로 설치해주세요.")?;
-    let json = flat_listing(&bin, url).await?;
+    let json = flat_listing(url).await?;
     let entries = match json["entries"].as_array() {
         Some(e) => e.clone(),
         None => vec![json],

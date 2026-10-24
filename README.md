@@ -19,6 +19,38 @@ Muse needs **yt-dlp** to download songs. Use the "yt-dlp 자동 설치" button i
 | macOS | `brew install yt-dlp` | `brew install ffmpeg` |
 | Windows | `winget install yt-dlp.yt-dlp` | `winget install Gyan.FFmpeg` |
 
+## Android (APK)
+
+Muse also runs on Android phones (Android 7.0+, 64-bit ARM). Install the APK directly; it's not on the Play Store.
+
+1. Send `Muse_*_android.apk` to the phone and open it. Allow "install unknown apps" for the app you opened it from (Files, KakaoTalk, Chrome…).
+2. Open Muse. The first launch takes a few seconds while the built-in yt-dlp unpacks and updates itself.
+3. Search, download and play as on the desktop.
+   - Playback keeps going with the screen off.
+   - The notification, lock screen and headphone buttons control it.
+
+The phone app works on its own; its library is separate from the desktop one.
+
+### Android Auto
+
+Muse shows up as a media app in Android Auto. In the car you can browse 좋아요 표시한 곡, 모든 곡, 최근 재생 and your playlists, play a song, and control playback.
+
+- **Sideloaded apps are hidden by default.** Android Auto only lists them once its developer settings allow it:
+  1. Android Auto settings → tap "버전" 10 times to unlock developer settings.
+  2. ⋮ → 개발자 설정 → enable "알 수 없는 소스" (Unknown sources).
+- **Open Muse on the phone once before driving.** It can stay in the background. The player lives in the app, so if it was never opened, the car asks you to open it on the phone first.
+
+### Building the APK
+
+The Android build needs rustup (not Homebrew Rust) with the Android targets, plus the Android SDK/NDK.
+
+```bash
+npx tauri android build --apk --target aarch64
+```
+
+- **Release signing:** reads `src-tauri/gen/android/keystore.properties`, which is not committed and points at a local keystore. Keep that keystore safe: updates only install over the old version if they're signed with the same key.
+- **Build steps and progress:** see [docs/ANDROID_PLAN.md](docs/ANDROID_PLAN.md).
+
 ## Disclaimer
 
 Muse is a personal, non-commercial project for learning and private listening.

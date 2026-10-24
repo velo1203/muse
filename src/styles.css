@@ -651,3 +651,8 @@ img { display: block; }
 .result-row:hover .res-actions > .icon-btn, .top-card .res-actions > .icon-btn, .res-actions > .icon-btn:focus-visible { opacity: 1; }
 .dl-btn.icon { width: var(--control-sm); padding: 0; }
 .dl-btn.done.icon, .dl-btn.busy.icon { width: var(--control-sm); padding: 0; }
+
+/* Coloured list art keeps its colour at hero size too */
+.hero-art.liked-art { background: var(--accent); color: var(--on-accent); }
+.hero-art.songs-art { background: #6d5dfc; color: #fff; }
+.hero-art.history-art { background: #2f6f73; color: #fff; }

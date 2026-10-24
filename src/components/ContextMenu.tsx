@@ -7,6 +7,7 @@ import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
 import { useStore } from "../store";
 import type { Track } from "../types";
+import { isMobile } from "../platform";
 
 export interface MenuState {
   x: number;
@@ -119,9 +120,11 @@ export function TrackMenu({ menu, onClose, playlistId }: { menu: MenuState; onCl
               <button onClick={run(() => openModal({ kind: "editTrack", trackId: single.id, tab: "source" }))}>
                 <RefreshCw size={16} /> 다른 음원으로 바꾸기
               </button>
-              <button onClick={run(() => revealItemInDir(single.path))}>
-                <FolderOpen size={16} /> Finder에서 보기
-              </button>
+              {!isMobile && (
+                <button onClick={run(() => revealItemInDir(single.path))}>
+                  <FolderOpen size={16} /> Finder에서 보기
+                </button>
+              )}
               {single.youtubeId && (
                 <button onClick={run(() => openUrl(`https://www.youtube.com/watch?v=${single.youtubeId}`))}>
                   <ExternalLink size={16} /> YouTube에서 원본 보기

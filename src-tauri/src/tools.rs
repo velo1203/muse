@@ -1,20 +1,28 @@
 //! Installs the external tools (yt-dlp, ffmpeg/ffprobe) into the app's own `bin` folder
 //! when they aren't already on the system, and keeps the app-managed yt-dlp up to date.
 
-use crate::ytdlp::{bin_dir, command, ffmpeg_dir, own_ytdlp, ytdlp_path};
+#[cfg(not(target_os = "android"))]
+use crate::ytdlp::{command, ffmpeg_dir, own_ytdlp, ytdlp_path};
+use crate::ytdlp::bin_dir;
 use serde::Serialize;
+#[cfg(not(target_os = "android"))]
 use std::io::Read;
-use std::path::{Path, PathBuf};
+#[cfg(not(target_os = "android"))]
+use std::path::Path;
+use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex;
 
 /// Serializes installs so concurrent callers wait for one download instead of racing.
 static YTDLP_LOCK: Mutex<()> = Mutex::const_new(());
+#[cfg(not(target_os = "android"))]
 static FFMPEG_LOCK: Mutex<()> = Mutex::const_new(());
 
+#[cfg(not(target_os = "android"))]
 const EXE: &str = std::env::consts::EXE_SUFFIX;
 const UPDATE_EVERY: Duration = Duration::from_secs(7 * 24 * 3600);
+#[cfg(not(target_os = "android"))]
 const YTDLP_RELEASES: &str = "https://github.com/yt-dlp/yt-dlp/releases";
 
 #[derive(Clone, Serialize)]
@@ -31,10 +39,12 @@ fn emit(app: &AppHandle, tool: &'static str, stage: &'static str, progress: f64,
     let _ = app.emit("tools", ToolEvent { tool, stage, progress, message });
 }
 
+#[cfg_attr(target_os = "android", allow(dead_code))]
 fn own_bin() -> Result<&'static PathBuf, String> {
     bin_dir().ok_or_else(|| "도구 폴더를 찾을 수 없습니다".to_string())
 }
 
+#[cfg(not(target_os = "android"))]
 /// Downloads `url` into memory, reporting 0–100 progress.
 async fn download(app: &AppHandle, tool: &'static str, url: &str) -> Result<Vec<u8>, String> {
     let mut resp = crate::net::client()
@@ -59,6 +69,7 @@ async fn download(app: &AppHandle, tool: &'static str, url: &str) -> Result<Vec<
     Ok(buf)
 }
 
+#[cfg(not(target_os = "android"))]
 async fn write_executable(path: &Path, bytes: &[u8]) -> Result<(), String> {
     // Write to a temp name first so a half-written binary is never picked up
     let tmp = path.with_extension("part");
@@ -71,6 +82,7 @@ async fn write_executable(path: &Path, bytes: &[u8]) -> Result<(), String> {
     tokio::fs::rename(&tmp, path).await.map_err(|e| e.to_string())
 }
 
+#[cfg(not(target_os = "android"))]
 /// Extracts the entries of `zip` whose file names satisfy `keep` into `dest` (flattened).
 fn unzip_into(zip: &[u8], dest: &Path, keep: impl Fn(&str) -> bool) -> Result<usize, String> {
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip)).map_err(|e| e.to_string())?;
@@ -100,6 +112,7 @@ fn unzip_into(zip: &[u8], dest: &Path, keep: impl Fn(&str) -> bool) -> Result<us
     Ok(n)
 }
 
+#[cfg(not(target_os = "android"))]
 /// Extracts all of `zip` into `dest`, keeping its folder layout and file modes.
 fn unzip_tree(zip: &[u8], dest: &Path) -> Result<(), String> {
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip)).map_err(|e| e.to_string())?;
@@ -125,6 +138,7 @@ fn unzip_tree(zip: &[u8], dest: &Path) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(target_os = "android"))]
 /// Downloads the latest yt-dlp into the app's `bin` folder (replacing any older copy there).
 async fn install_ytdlp(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = own_bin()?;
@@ -172,6 +186,7 @@ async fn install_ytdlp(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+#[cfg(not(target_os = "android"))]
 async fn install_ytdlp_reporting(app: &AppHandle) -> Result<PathBuf, String> {
     let result = install_ytdlp(app).await;
     match &result {
@@ -181,6 +196,7 @@ async fn install_ytdlp_reporting(app: &AppHandle) -> Result<PathBuf, String> {
     result
 }
 
+#[cfg(not(target_os = "android"))]
 /// Makes sure yt-dlp is available, downloading it if needed.
 pub async fn ensure_ytdlp(app: &AppHandle) -> Result<PathBuf, String> {
     // Usual case: already there, no need to wait behind an install or update
@@ -194,6 +210,7 @@ pub async fn ensure_ytdlp(app: &AppHandle) -> Result<PathBuf, String> {
     install_ytdlp_reporting(app).await
 }
 
+#[cfg(not(target_os = "android"))]
 /// Makes sure ffmpeg + ffprobe are available, downloading static builds if needed.
 pub async fn ensure_ffmpeg(app: &AppHandle) -> Result<PathBuf, String> {
     let _guard = FFMPEG_LOCK.lock().await;
@@ -247,12 +264,14 @@ pub async fn ensure_ffmpeg(app: &AppHandle) -> Result<PathBuf, String> {
     result
 }
 
+#[cfg(not(target_os = "android"))]
 /// Version tag of the newest yt-dlp release (the `latest` link redirects to its tag page).
 async fn latest_ytdlp_version() -> Option<String> {
     let resp = crate::net::client().get(format!("{YTDLP_RELEASES}/latest")).timeout(crate::net::API_TIMEOUT).send().await.ok()?;
     resp.url().path_segments()?.next_back().map(str::to_string)
 }
 
+#[cfg(not(target_os = "android"))]
 /// The yt-dlp that Muse installed itself is kept current (YouTube changes often break old versions),
 /// and the slow single-file build from earlier versions is swapped for the folder build.
 /// Copies managed by Homebrew / winget are left to their package manager.
@@ -284,6 +303,73 @@ pub async fn update_ytdlp_if_stale(app: &AppHandle) {
     }
     let _guard = YTDLP_LOCK.lock().await;
     let _ = install_ytdlp_reporting(app).await;
+}
+
+// ---------- Android: yt-dlp and ffmpeg ship inside the app (youtubedl-android) ----------
+
+/// The bundled yt-dlp unpacks its Python runtime on first use; later calls return immediately.
+#[cfg(target_os = "android")]
+pub async fn ensure_ytdlp(app: &AppHandle) -> Result<PathBuf, String> {
+    static READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if READY.load(std::sync::atomic::Ordering::Acquire) {
+        return Ok(PathBuf::from("yt-dlp"));
+    }
+    let _guard = YTDLP_LOCK.lock().await;
+    if READY.load(std::sync::atomic::Ordering::Acquire) {
+        return Ok(PathBuf::from("yt-dlp"));
+    }
+    emit(app, "yt-dlp", "installing", 100.0, None);
+    let ready = async {
+        crate::android::ytdl_init().await?;
+        // The yt-dlp shipped inside the APK is months old and YouTube rejects it (HTTP 403):
+        // the very first time, update before anything is searched or downloaded
+        let stamp = bin_dir().map(|d| d.join(".yt-dlp-checked"));
+        if stamp.as_ref().is_some_and(|s| !s.is_file()) {
+            crate::android::ytdl_update().await?;
+            if let Some(s) = &stamp {
+                let _ = tokio::fs::create_dir_all(s.parent().unwrap()).await;
+                let _ = tokio::fs::write(s, b"").await;
+            }
+        }
+        Ok::<(), String>(())
+    };
+    match ready.await {
+        Ok(()) => {
+            READY.store(true, std::sync::atomic::Ordering::Release);
+            emit(app, "yt-dlp", "done", 100.0, None);
+            Ok(PathBuf::from("yt-dlp"))
+        }
+        Err(e) => {
+            emit(app, "yt-dlp", "error", 0.0, Some(e.clone()));
+            Err(e)
+        }
+    }
+}
+
+/// ffmpeg is bundled with youtubedl-android; nothing to install.
+#[cfg(target_os = "android")]
+pub async fn ensure_ffmpeg(app: &AppHandle) -> Result<PathBuf, String> {
+    ensure_ytdlp(app).await
+}
+
+/// Updates the bundled yt-dlp weekly (YouTube changes often break old versions).
+#[cfg(target_os = "android")]
+pub async fn update_ytdlp_if_stale(_app: &AppHandle) {
+    let Some(dir) = bin_dir() else { return };
+    let _ = tokio::fs::create_dir_all(dir).await;
+    let stamp = dir.join(".yt-dlp-checked");
+    let fresh = std::fs::metadata(&stamp)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| SystemTime::now().duration_since(t).ok())
+        .is_some_and(|age| age < UPDATE_EVERY);
+    if fresh {
+        return;
+    }
+    let _guard = YTDLP_LOCK.lock().await;
+    if crate::android::ytdl_update().await.is_ok() {
+        let _ = tokio::fs::write(&stamp, b"").await;
+    }
 }
 
 /// Startup task: install whatever is missing, then refresh yt-dlp if it's old.

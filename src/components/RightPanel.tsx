@@ -161,12 +161,7 @@ export function RightPanel() {
               <>
                 <div className="q-label">다음: {s.contextLabel}</div>
                 {upcoming.map(({ t, i }) => (
-                  <QueueItem
-                    key={`${t.id}-${i}`}
-                    t={t}
-                    onPlay={() => s.jumpTo(i)}
-                    onRemove={() => s.removeFromQueue(i)}
-                  />
+                  <QueueItem key={`${t.id}-${i}`} t={t} onPlay={() => s.jumpTo(i)} onRemove={() => s.removeFromQueue(i)} />
                 ))}
               </>
             )}

@@ -3,6 +3,8 @@ import { listen } from "@tauri-apps/api/event";
 import { api, fileUrl, type DownloadRequest } from "./api";
 import type { AfterDownload, DownloadJob, Library, ToolEvent, Track, View } from "./types";
 import { EQ_PRESETS, Engine, LOUDNESS_TARGETS, type VolumeLevel } from "./engine";
+import { isAndroid, native } from "./platform";
+import { measureLoudness } from "./loudness";
 
 type Repeat = "off" | "all" | "one";
 
@@ -87,6 +89,8 @@ interface State {
   sleep: SleepTimer;
   /** Latest install status of the external tools (yt-dlp / ffmpeg) */
   tools: Partial<Record<ToolEvent["tool"], ToolEvent>>;
+  /** Phone: full-screen player sheet and which page of it is showing */
+  fullPlayer: "player" | "lyrics" | "queue" | null;
 }
 
 interface Actions {
@@ -96,6 +100,7 @@ interface Actions {
   goBack: () => void;
   goForward: () => void;
   setRightPanel: (p: State["rightPanel"]) => void;
+  setFullPlayer: (p: State["fullPlayer"]) => void;
   showToast: (msg: string) => void;
   openModal: (m: Modal) => void;
 
@@ -212,7 +217,67 @@ export const useStore = create<State & Actions>((set, get) => {
     });
     updateSession(t);
     saveSession();
+    syncNative();
   };
+
+  /** Track ids of a list as Android Auto shows it (same order as the app). */
+  const listIds = (listId: string): { ids: string[]; label: string } => {
+    const { library } = get();
+    if (listId === "liked") return { ids: library.liked, label: "좋아요 표시한 곡" };
+    if (listId === "songs") return { ids: [...library.tracks].reverse().map((t) => t.id), label: "모든 곡" };
+    if (listId === "recent") {
+      const ids = [...new Set([...library.history].reverse().map((h) => h.trackId))].slice(0, 50);
+      return { ids, label: "최근 재생" };
+    }
+    if (listId.startsWith("playlist:")) {
+      const p = library.playlists.find((x) => x.id === listId.slice(9));
+      return { ids: p?.trackIds ?? [], label: p?.name ?? "" };
+    }
+    return { ids: [], label: "" };
+  };
+
+  /** "<list>|<track>" picked in Android Auto: play that list from that song. */
+  function playFromList(mediaId: string) {
+    const [listId, trackId] = mediaId.split("|");
+    const { ids, label } = listIds(listId);
+    const known = ids.filter((id) => trackById(id));
+    const start = Math.max(0, known.indexOf(trackId));
+    if (known.length) get().playTracks(known, start, label);
+  }
+
+  /** Voice search ("OK Google, play … on Muse"): best library match, or everything when empty. */
+  function playFromSearch(query: string) {
+    const q = query.trim().toLowerCase();
+    const all = [...get().library.tracks].reverse();
+    if (!q) return all.length && get().playTracks(all.map((t) => t.id), 0, "모든 곡");
+    const words = q.split(/\s+/);
+    const scored = all
+      .map((t) => {
+        const hay = `${t.title} ${t.artist} ${t.album}`.toLowerCase();
+        return { t, score: words.filter((w) => hay.includes(w)).length + (t.title.toLowerCase() === q ? 5 : 0) };
+      })
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score);
+    if (!scored.length) return get().showToast(`'${query}'와 맞는 곡이 라이브러리에 없어요`);
+    const top = scored[0].t;
+    // The other matches follow the best one
+    const rest = scored.slice(1).map((x) => x.t.id);
+    get().playTracks([top.id, ...rest], 0, `'${query}' 검색`);
+  }
+
+  /** Mirrors the player into Android's media notification / lock screen. */
+  function syncNative() {
+    if (!native) return;
+    const { current, playing, time, duration } = get();
+    const t = trackById(current);
+    if (!t) {
+      native.mediaStop();
+      return;
+    }
+    native.mediaUpdate(
+      JSON.stringify({ title: t.title, artist: t.artist, album: t.album, cover: t.cover ?? "", playing, position: time, duration }),
+    );
+  }
 
   engine.on("timeupdate", (el) => {
     const now = el.currentTime;
@@ -245,10 +310,14 @@ export const useStore = create<State & Actions>((set, get) => {
   engine.on("durationchange", (el) => {
     if (isFinite(el.duration)) set({ duration: el.duration });
   });
-  engine.on("play", () => set({ playing: true }));
+  engine.on("play", () => {
+    set({ playing: true });
+    syncNative();
+  });
   engine.on("pause", () => {
     set({ playing: false });
     saveSession();
+    syncNative();
   });
   engine.on("ended", () => {
     if (get().sleep === "track") {
@@ -262,7 +331,10 @@ export const useStore = create<State & Actions>((set, get) => {
     } else advance(false);
   });
   engine.on("error", (el) => {
-    if (el.src) get().showToast("이 파일을 재생할 수 없습니다");
+    console.warn("media error", el.error?.code, el.error?.message, el.src);
+    // Transient errors (e.g. a re-requested byte range) can fire while playback carries on;
+    // only report it when the song actually stopped
+    if (el.src && el.paused && el.error?.code !== MediaError.MEDIA_ERR_ABORTED) get().showToast("이 파일을 재생할 수 없습니다");
   });
 
   /** Moves to the next track; `fade` crossfades instead of cutting. */
@@ -357,9 +429,11 @@ export const useStore = create<State & Actions>((set, get) => {
     playback: readJson("playback", defaultPlayback),
     sleep: null,
     tools: {},
+    fullPlayer: null,
 
     init: async () => {
-      engine.setVolume(get().volume);
+      // Phones use the hardware volume buttons; the app itself plays at full level
+      engine.setVolume(isAndroid ? 1 : get().volume);
       applyAudioSettings();
       get().setLibrary(await api.getLibrary());
 
@@ -400,6 +474,42 @@ export const useStore = create<State & Actions>((set, get) => {
       });
       listen<ToolEvent>("tools", ({ payload }) => set({ tools: { ...get().tools, [payload.tool]: payload } }));
       window.addEventListener("beforeunload", saveSession);
+
+      if (isAndroid) {
+        const w = window as unknown as Record<string, unknown>;
+        // Notification / lock screen / headset controls
+        const media = (action: string) => {
+          if (action.startsWith("playId:")) return playFromList(action.slice(7));
+          if (action.startsWith("search:")) return playFromSearch(action.slice(7));
+          if (action === "play") {
+            // Nothing loaded yet (e.g. "play" from the car right after opening): start the library
+            if (!get().current) return get().togglePlay();
+            engine.play();
+          }
+          else if (action === "pause") engine.pause();
+          else if (action === "next") get().next();
+          else if (action === "prev") get().prev();
+          else if (action.startsWith("seek:")) get().seek(Number(action.slice(5)) / 1000);
+        };
+        w.__museMedia = media;
+        // Hardware back: close the player sheet / modal, then go back; false lets Android leave the app
+        w.__museBack = () => {
+          const st = get();
+          if (st.modal) return st.openModal(null), true;
+          if (st.fullPlayer) return st.setFullPlayer(null), true;
+          if (st.back.length) return st.goBack(), true;
+          if (st.view.kind !== "home") return st.navigate({ kind: "home" }), true;
+          return false;
+        };
+        measureMissingLoudness();
+        listen("library-changed", () => {
+          measureMissingLoudness();
+          native?.libraryChanged();
+        });
+        // A song may have been picked in Android Auto while the app was starting
+        const pending = native?.ready();
+        if (pending) media(pending);
+      }
     },
 
     setLibrary: (library) => set({ library }),
@@ -420,6 +530,11 @@ export const useStore = create<State & Actions>((set, get) => {
       set({ view: forward[0], forward: forward.slice(1), back: [...back, view] });
     },
     setRightPanel: (rightPanel) => set({ rightPanel }),
+    setFullPlayer: (fullPlayer) => {
+      // The queue page of the phone player reuses the desktop queue panel
+      if (fullPlayer === "queue") set({ rightPanel: "queue" });
+      set({ fullPlayer });
+    },
     showToast: (toast) => {
       set({ toast });
       clearTimeout(toastTimer);
@@ -465,6 +580,7 @@ export const useStore = create<State & Actions>((set, get) => {
     seek: (t) => {
       engine.seek(t);
       set({ time: t });
+      syncNative();
     },
     setVolume: (volume) => {
       engine.setVolume(volume);
@@ -632,6 +748,29 @@ export const useStore = create<State & Actions>((set, get) => {
     },
   };
 });
+
+let measuring = false;
+/** Android: measure loudness of songs that don't have it yet, one at a time. */
+async function measureMissingLoudness() {
+  if (measuring) return;
+  measuring = true;
+  try {
+    for (;;) {
+      const t = useStore.getState().library.tracks.find((x) => x.loudness == null && !failedLoudness.has(x.id));
+      if (!t) break;
+      try {
+        const m = await measureLoudness(fileUrl(t.path));
+        if (!m) throw new Error("silent");
+        useStore.getState().setLibrary(await api.setLoudness(t.id, m.lufs, m.peak));
+      } catch {
+        failedLoudness.add(t.id);
+      }
+    }
+  } finally {
+    measuring = false;
+  }
+}
+const failedLoudness = new Set<string>();
 
 function updateSession(t: Track) {
   document.title = `${t.title} • ${t.artist}`;

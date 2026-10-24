@@ -6,6 +6,7 @@ import type { AfterDownload, CatalogAlbum, CatalogTrack, DownloadJob, Track, YtR
 import { TrackTable } from "../components/TrackTable";
 import { TrackMenu } from "../components/ContextMenu";
 import { DownloadMenu } from "../components/DownloadMenu";
+import { isMobile } from "../platform";
 import { RetryToolsButton, useToolStatus } from "../components/ToolSetup";
 
 type Tab = "all" | "songs" | "albums" | "youtube" | "library";
@@ -172,6 +173,17 @@ export function SearchView({ query = "" }: { query?: string }) {
   const ytdlpEvent = s.tools["yt-dlp"];
   const ytdlpMissing = tools !== null && !tools.ytdlp && ytdlpEvent?.stage === "error";
   const isUrl = isYoutubeUrl(query);
+  // Phones start a slow yt-dlp process per search, so YouTube results load on request
+  // (Enter, the YouTube tab or the button) instead of on every keystroke
+  const [ytWantedFor, setYtWantedFor] = useState<string | null>(null);
+  const ytWanted = !isMobile || tab === "youtube" || ytWantedFor === query.trim();
+
+  useEffect(() => {
+    if (!isMobile) return;
+    const submit = () => setYtWantedFor(useStore.getState().view.kind === "search" ? (useStore.getState().view as { query?: string }).query?.trim() ?? null : null);
+    window.addEventListener("muse-search-submit", submit);
+    return () => window.removeEventListener("muse-search-submit", submit);
+  }, []);
 
   useEffect(() => {
     const q = query.trim();
@@ -197,13 +209,31 @@ export function SearchView({ query = "" }: { query?: string }) {
       }
       track(api.catalogSearch(q), setCatalog);
       track(api.catalogAlbums(q), setAlbums);
-      track(api.youtubeSearch(q), setYt);
     }, 450);
     return () => {
       stale = true;
       clearTimeout(timer);
     };
   }, [query]);
+
+  useEffect(() => {
+    const q = query.trim();
+    setYt([]);
+    if (!q || isYoutubeUrl(q) || !ytWanted) return;
+    let stale = false;
+    const timer = setTimeout(() => {
+      setLoading((n) => n + 1);
+      api
+        .youtubeSearch(q)
+        .then((r) => !stale && setYt(r))
+        .catch((e) => !stale && setError(String(e)))
+        .finally(() => setLoading((n) => n - 1));
+    }, 450);
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+  }, [query, ytWanted]);
 
   const jobs = Object.values(s.downloads);
   const jobFor = (key: string) =>
@@ -448,6 +478,11 @@ export function SearchView({ query = "" }: { query?: string }) {
                 </div>
                 {yt.slice(0, 5).map((r) => ytRow(r))}
               </>
+            )}
+            {!ytWanted && (
+              <button className="btn btn-secondary btn-sm yt-more" onClick={() => setYtWantedFor(query.trim())}>
+                YouTube에서도 찾기
+              </button>
             )}
             {loading === 0 && !catalog.length && !yt.length && !libMatches.length && !albums.length && (
               <div className="empty">

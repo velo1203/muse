@@ -10,44 +10,7 @@ import { PlayerBar } from "./components/PlayerBar";
 import { RightPanel } from "./components/RightPanel";
 import { EditTrackModal } from "./components/EditTrackModal";
 import { PlaylistModal } from "./components/PlaylistModal";
-import { Home } from "./views/Home";
-import { SearchView } from "./views/Search";
-import { Collection } from "./views/Collection";
-import { Downloads } from "./views/Downloads";
-import { Settings } from "./views/Settings";
-import { AlbumView } from "./views/Album";
-import { ArtistView } from "./views/Artist";
-import { CatalogAlbumView } from "./views/CatalogAlbum";
-import { LyricsView } from "./views/Lyrics";
-import { HistoryView } from "./views/History";
-
-function Main() {
-  const view = useStore((s) => s.view);
-  switch (view.kind) {
-    case "home":
-      return <Home />;
-    case "search":
-      return <SearchView query={view.query} />;
-    case "songs":
-    case "liked":
-    case "playlist":
-      return <Collection view={view} />;
-    case "artist":
-      return <ArtistView name={view.name} />;
-    case "album":
-      return <AlbumView artist={view.artist} album={view.album} />;
-    case "catalogAlbum":
-      return <CatalogAlbumView id={view.id} />;
-    case "lyrics":
-      return <LyricsView />;
-    case "history":
-      return <HistoryView />;
-    case "downloads":
-      return <Downloads />;
-    case "settings":
-      return <Settings />;
-  }
-}
+import { Main } from "./views/Main";
 
 export default function App() {
   const toast = useStore((s) => s.toast);

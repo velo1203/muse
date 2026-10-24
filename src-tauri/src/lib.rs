@@ -1,3 +1,5 @@
+#[cfg(target_os = "android")]
+mod android;
 mod catalog;
 mod library;
 mod lyrics;
@@ -17,7 +19,8 @@ use tokio::sync::{Mutex, Semaphore};
 type SharedStore = Arc<Mutex<Store>>;
 
 /// At most this many yt-dlp downloads run at once (album downloads queue up behind it).
-static DOWNLOAD_SLOTS: Semaphore = Semaphore::const_new(3);
+/// Phones run each one in its own Python process, so they get fewer.
+static DOWNLOAD_SLOTS: Semaphore = Semaphore::const_new(if cfg!(target_os = "android") { 2 } else { 3 });
 
 // ---------- Search ----------
 
@@ -319,6 +322,8 @@ async fn import_files(app: AppHandle, store: State<'_, SharedStore>, paths: Vec<
         let s = store.lock().await;
         (s.music_dir(), s.covers_dir())
     };
+    // Android's file picker hands out content:// URIs; Kotlin copies those into the library
+    let (uris, paths): (Vec<String>, Vec<String>) = paths.into_iter().partition(|p| p.starts_with("content://"));
     let mut files: Vec<PathBuf> = vec![];
     for p in paths.iter().map(PathBuf::from) {
         if p.is_dir() {
@@ -338,14 +343,33 @@ async fn import_files(app: AppHandle, store: State<'_, SharedStore>, paths: Vec<
             .is_some_and(|e| media::AUDIO_EXTS.contains(&e.to_lowercase().as_str()))
     });
 
+    let mut sources: Vec<(String, Option<PathBuf>)> = files.into_iter().map(|f| (f.display().to_string(), Some(f))).collect();
+    sources.extend(uris.into_iter().map(|u| (u, None)));
+
     let mut imported = 0;
-    for src in files {
+    for (raw, local) in sources {
         let id = uuid::Uuid::new_v4().to_string();
-        let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("audio").to_lowercase();
-        let dest = music_dir.join(format!("{id}.{ext}"));
-        if tokio::fs::copy(&src, &dest).await.is_err() {
-            continue;
-        }
+        // Copy into the library; `src` keeps the original file name for title guessing
+        let (dest, src) = match local {
+            Some(src) => {
+                let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("audio").to_lowercase();
+                let dest = music_dir.join(format!("{id}.{ext}"));
+                if tokio::fs::copy(&src, &dest).await.is_err() {
+                    continue;
+                }
+                (dest, src)
+            }
+            None => {
+                #[cfg(target_os = "android")]
+                match android::copy_uri(&raw, &music_dir, &id).await {
+                    Ok((dest, name)) => (dest, PathBuf::from(name)),
+                    Err(_) => continue,
+                }
+                #[cfg(not(target_os = "android"))]
+                continue;
+            }
+        };
+        let _ = &raw;
         let info = media::probe(&dest).await;
         let cover = media::extract_cover(&dest, &covers_dir.join(format!("{id}.jpg"))).await;
         let loud = ytdlp::measure_loudness(&dest).await;
@@ -478,6 +502,18 @@ async fn record_play(app: AppHandle, store: State<'_, SharedStore>, track_id: St
         s.data.history.push(HistoryEntry { track_id, at: now });
         let overflow = s.data.history.len().saturating_sub(HISTORY_LIMIT);
         s.data.history.drain(..overflow);
+        Ok(())
+    })
+    .await
+}
+
+/// Stores loudness measured in the webview (Android has no ffmpeg to measure it natively).
+#[tauri::command]
+async fn set_loudness(app: AppHandle, store: State<'_, SharedStore>, track_id: String, loudness: f64, peak: f64) -> Result<Library, String> {
+    mutate(&app, &store, |s| {
+        let t = track_mut(s, &track_id)?;
+        t.loudness = Some(loudness);
+        t.peak = Some(peak);
         Ok(())
     })
     .await
@@ -663,9 +699,12 @@ async fn set_quality(app: AppHandle, store: State<'_, SharedStore>, quality: Str
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_dialog::init());
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(android::plugin());
+    builder
         .setup(|app| {
             let root = app.path().app_data_dir()?;
             ytdlp::set_bin_dir(root.join("bin"));
@@ -689,6 +728,7 @@ pub fn run() {
             get_lyrics,
             repair_library,
             record_play,
+            set_loudness,
             clear_history,
             update_track,
             set_track_cover,

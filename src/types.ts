@@ -116,7 +116,9 @@ export type View =
   | { kind: "lyrics" }
   | { kind: "history" }
   | { kind: "downloads" }
-  | { kind: "settings" };
+  | { kind: "settings" }
+  /** Phone only: the library list (the desktop shows it in the sidebar) */
+  | { kind: "library" };
 
 export interface ToolEvent {
   tool: "yt-dlp" | "ffmpeg";

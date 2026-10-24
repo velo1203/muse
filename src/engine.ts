@@ -1,3 +1,5 @@
+import { isAndroid } from "./platform";
+
 /**
  * Web Audio playback engine.
  *
@@ -122,8 +124,41 @@ export class Engine {
     if (this.ctx.state === "suspended") this.ctx.resume();
   }
 
+  /** Bumped on every load so a slow source lookup can't override a newer choice. */
+  private loadToken = 0;
+  /** Recently played sources held in memory (Android), most recent last: source URL → blob URL. */
+  private blobs = new Map<string, string>();
+
+  /**
+   * Android's asset protocol breaks ranged reads partway into a song ("PIPELINE_ERROR_READ"),
+   * so on phones the file is read once into memory and played from a blob URL.
+   */
+  private async playable(src: string): Promise<string> {
+    if (!isAndroid) return src;
+    const hit = this.blobs.get(src);
+    if (hit) {
+      this.blobs.delete(src);
+      this.blobs.set(src, hit);
+      return hit;
+    }
+    const blob = await (await fetch(src)).blob();
+    const url = URL.createObjectURL(blob);
+    this.blobs.set(src, url);
+    // Keep a few (current, crossfade partner, the one before) and free the rest
+    for (const [key, old] of this.blobs) {
+      if (this.blobs.size <= 3) break;
+      if (this.decks.some((d) => d.el.src === old)) continue;
+      URL.revokeObjectURL(old);
+      this.blobs.delete(key);
+    }
+    return url;
+  }
+
   /** Hard switch to a new source on the active deck, optionally resuming at `startAt` seconds. */
-  load(src: string, autoplay: boolean, startAt = 0) {
+  async load(src: string, autoplay: boolean, startAt = 0) {
+    const token = ++this.loadToken;
+    const url = await this.playable(src);
+    if (token !== this.loadToken) return;
     this.cancelFade();
     const other = this.decks[1 - this.active];
     other.el.pause();
@@ -131,7 +166,7 @@ export class Engine {
     const deck = this.decks[this.active];
     deck.gain.gain.cancelScheduledValues(0);
     deck.gain.gain.value = 1;
-    deck.el.src = src;
+    deck.el.src = url;
     if (startAt > 0) {
       deck.el.addEventListener("loadedmetadata", () => (deck.el.currentTime = startAt), { once: true });
     }
@@ -140,14 +175,17 @@ export class Engine {
   }
 
   /** Starts `src` on the idle deck and fades between the two over `secs`. */
-  crossfadeTo(src: string, secs: number) {
+  async crossfadeTo(src: string, secs: number) {
+    const token = ++this.loadToken;
+    const url = await this.playable(src);
+    if (token !== this.loadToken) return;
     this.resume();
     this.cancelFade();
     const from = this.decks[this.active];
     this.active = 1 - this.active;
     const to = this.decks[this.active];
     const now = this.ctx.currentTime;
-    to.el.src = src;
+    to.el.src = url;
     to.gain.gain.cancelScheduledValues(now);
     to.gain.gain.setValueAtTime(0, now);
     to.gain.gain.linearRampToValueAtTime(1, now + secs);
