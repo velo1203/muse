@@ -4,7 +4,8 @@ import { api, formatTime } from "../api";
 import { useStore } from "../store";
 import type { AfterDownload, CatalogAlbum, CatalogTrack } from "../types";
 import { Page } from "../components/Hero";
-import { ResultActions, catalogKey } from "./Search";
+import { activate, isMobile } from "../platform";
+import { ResultActions, catalogKey, isBusy } from "./Search";
 
 /** An album from the online catalog; songs can be downloaded one by one or all at once. */
 export function CatalogAlbumView({ id }: { id: number }) {
@@ -71,7 +72,7 @@ export function CatalogAlbumView({ id }: { id: number }) {
             <div
               key={i}
               className="result-row catalog-track"
-              onDoubleClick={() => (t ? s.playOrToggle([t.id], 0, t.title) : download(c))}
+              {...activate(() => (t ? s.playOrToggle([t.id], 0, t.title) : !isBusy(jobFor(c)) && download(c, isMobile ? { play: true } : undefined)))}
             >
               <div className="num">{c.trackNumber}</div>
               <div style={{ minWidth: 0 }}>

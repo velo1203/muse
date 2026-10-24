@@ -139,10 +139,50 @@ async fn download_track(app: AppHandle, store: State<'_, SharedStore>, req: Down
 async fn find_source(app: &AppHandle, job_id: &str, title: &str, artist: &str, duration: Option<f64>) -> Result<String, String> {
     emit(app, DownloadEvent::Searching { job_id: job_id.into() });
     tools::ensure_ytdlp(app).await?;
-    let results = ytdlp::search(&format!("{artist} {title} audio"), 10).await?;
-    ytdlp::best_match(&results, title, artist, duration)
-        .map(|r| r.id.clone())
-        .ok_or_else(|| "유튜브에서 음원을 찾지 못했습니다".to_string())
+    // Less-known songs often find nothing with the full catalog title ("(feat. …)", "- Remastered"),
+    // so fall back to simpler queries before giving up
+    let mut last_err = None;
+    for query in source_queries(title, artist) {
+        match ytdlp::search(&query, 10).await {
+            Ok(results) => {
+                if let Some(r) = ytdlp::best_match(&results, title, artist, duration) {
+                    return Ok(r.id.clone());
+                }
+            }
+            Err(e) => last_err = Some(e),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| "유튜브에서 음원을 찾지 못했습니다. 검색의 YouTube 탭에서 직접 골라 받아보세요.".to_string()))
+}
+
+/// Search terms for a song, from most to least specific.
+fn source_queries(title: &str, artist: &str) -> Vec<String> {
+    // "Song (feat. X) [Remastered] - From \"Film\"" → "Song"
+    let mut plain = String::new();
+    let mut depth = 0;
+    for ch in title.chars() {
+        match ch {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = (depth - 1).max(0),
+            _ if depth == 0 => plain.push(ch),
+            _ => {}
+        }
+    }
+    let plain = plain.split(" - ").next().unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" ");
+    // "A, B & C" → "A"
+    let main_artist = artist.split([',', '&']).next().unwrap_or(artist).trim();
+    let mut out: Vec<String> = Vec::new();
+    for q in [
+        format!("{artist} {title} audio"),
+        format!("{artist} {title}"),
+        format!("{main_artist} {plain}"),
+    ] {
+        let q = q.trim().to_string();
+        if !q.is_empty() && !out.contains(&q) {
+            out.push(q);
+        }
+    }
+    out
 }
 
 /// Downloads `youtube_id` into the music folder under `file_stem`, reporting progress for `job_id`.
