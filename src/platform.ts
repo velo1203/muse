@@ -2,6 +2,9 @@
 export const isAndroid = navigator.userAgent.includes("Android");
 export const isMobile = isAndroid;
 
+/** Opens a list row with a tap on phones and a double-click on desktop. */
+export const activate = (fn: () => void) => (isMobile ? { onClick: fn } : { onDoubleClick: fn });
+
 /** Native bridge exposed by MainActivity (Android only). */
 interface MuseAndroid {
   insets(): string;

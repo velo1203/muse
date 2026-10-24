@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, CirclePlus, Download, Link2, Loader2, Pause, Play, RotateCcw } from "lucide-react";
+import { Check, CirclePlus, Clock, Download, Link2, Loader2, Pause, Play, RotateCcw, X } from "lucide-react";
 import { api, formatTime, isYoutubeUrl } from "../api";
 import { useStore } from "../store";
 import type { AfterDownload, CatalogAlbum, CatalogTrack, DownloadJob, Track, YtResult } from "../types";
 import { TrackTable } from "../components/TrackTable";
 import { TrackMenu } from "../components/ContextMenu";
 import { DownloadMenu } from "../components/DownloadMenu";
-import { isMobile } from "../platform";
+import { activate, isMobile } from "../platform";
 import { RetryToolsButton, useToolStatus } from "../components/ToolSetup";
 
 type Tab = "all" | "songs" | "albums" | "youtube" | "library";
@@ -23,6 +23,38 @@ const GENRES = [
   { name: "Lo-fi", q: "lofi", c: "#5a4a68" },
   { name: "OST", q: "드라마 OST", c: "#93408a" },
 ];
+
+const RECENT_KEY = "recentSearches";
+
+function loadRecent(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]");
+    return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRecent(list: string[]) {
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(list));
+  } catch {
+    /* storage unavailable: recent searches just won't persist */
+  }
+}
+
+/** Remembers a search the user acted on (submitted, or played / downloaded a result from). */
+export function rememberSearch(query: string) {
+  const q = query.trim();
+  if (!q || isYoutubeUrl(q)) return;
+  saveRecent([q, ...loadRecent().filter((x) => x.toLowerCase() !== q.toLowerCase())].slice(0, 10));
+}
+
+// yt-dlp searches run one at a time: on phones parallel ones starve each other and time out
+/** A download that's still on its way (a failed one can be retried by tapping again). */
+export const isBusy = (j?: DownloadJob) => !!j && j.status !== "error" && j.status !== "done";
+
+let ytQueue: Promise<unknown> = Promise.resolve();
 
 const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
 export const catalogKey = (c: { artist: string; title: string }) => `${norm(c.artist)}|${norm(c.title)}`;
@@ -118,7 +150,7 @@ export function ResultActions({
   const playOrToggle = useStore((s) => s.playOrToggle);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   return (
-    <div className="res-actions" onDoubleClick={(e) => e.stopPropagation()}>
+    <div className="res-actions" onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
       <button
         className="icon-btn"
         title={owned ? "더 보기" : "받고 담기"}
@@ -173,17 +205,11 @@ export function SearchView({ query = "" }: { query?: string }) {
   const ytdlpEvent = s.tools["yt-dlp"];
   const ytdlpMissing = tools !== null && !tools.ytdlp && ytdlpEvent?.stage === "error";
   const isUrl = isYoutubeUrl(query);
-  // Phones start a slow yt-dlp process per search, so YouTube results load on request
-  // (Enter, the YouTube tab or the button) instead of on every keystroke
-  const [ytWantedFor, setYtWantedFor] = useState<string | null>(null);
-  const ytWanted = !isMobile || tab === "youtube" || ytWantedFor === query.trim();
-
+  const [recent, setRecent] = useState(loadRecent);
+  // The search page stays mounted while typing, so pick up searches remembered since
   useEffect(() => {
-    if (!isMobile) return;
-    const submit = () => setYtWantedFor(useStore.getState().view.kind === "search" ? (useStore.getState().view as { query?: string }).query?.trim() ?? null : null);
-    window.addEventListener("muse-search-submit", submit);
-    return () => window.removeEventListener("muse-search-submit", submit);
-  }, []);
+    if (!query.trim()) setRecent(loadRecent());
+  }, [query]);
 
   useEffect(() => {
     const q = query.trim();
@@ -219,21 +245,21 @@ export function SearchView({ query = "" }: { query?: string }) {
   useEffect(() => {
     const q = query.trim();
     setYt([]);
-    if (!q || isYoutubeUrl(q) || !ytWanted) return;
+    if (!q || isYoutubeUrl(q)) return;
     let stale = false;
+    // Phones wait for a longer pause in typing, since each search starts a slow yt-dlp process
     const timer = setTimeout(() => {
       setLoading((n) => n + 1);
-      api
-        .youtubeSearch(q)
-        .then((r) => !stale && setYt(r))
+      ytQueue = ytQueue
+        .then(() => (stale ? null : api.youtubeSearch(q).then((r) => !stale && setYt(r))))
         .catch((e) => !stale && setError(String(e)))
         .finally(() => setLoading((n) => n - 1));
-    }, 450);
+    }, isMobile ? 900 : 450);
     return () => {
       stale = true;
       clearTimeout(timer);
     };
-  }, [query, ytWanted]);
+  }, [query]);
 
   const jobs = Object.values(s.downloads);
   const jobFor = (key: string) =>
@@ -245,27 +271,37 @@ export function SearchView({ query = "" }: { query?: string }) {
   const q = norm(query);
   const libMatches = q && !isUrl ? s.library.tracks.filter((t) => norm(`${t.title} ${t.artist} ${t.album}`).includes(q)) : [];
 
-  const playOne = (t?: Track) => t && s.playOrToggle([t.id], 0, t.title);
-  const downloadCatalog = (c: CatalogTrack, after?: AfterDownload) =>
+  const playOne = (t?: Track) => {
+    if (!t) return;
+    rememberSearch(query);
+    s.playOrToggle([t.id], 0, t.title);
+  };
+  const downloadCatalog = (c: CatalogTrack, after?: AfterDownload) => {
+    rememberSearch(query);
     s.startDownload({
       key: catalogKey(c), title: c.title, artist: c.artist, album: c.album, artwork: c.artwork, duration: c.duration,
       trackNumber: c.trackNumber, discNumber: c.discNumber, year: c.year, genre: c.genre, after,
     });
+  };
   const downloadYt = (r: YtResult, after?: AfterDownload) => {
+    rememberSearch(query);
     const p = parseYtTitle(r);
     s.startDownload({ key: r.id, youtubeId: r.id, title: p.title, artist: p.artist, duration: r.duration, after });
   };
+
+  // A tap on the phone means "I want to hear this": download, then play
+  const tapAfter: AfterDownload | undefined = isMobile ? { play: true } : undefined;
 
   const catalogRow = (c: CatalogTrack, i: number, compact = false) => {
     const key = catalogKey(c);
     const owned = libByKey.get(key) ?? trackById(jobFor(key)?.trackId);
     return (
-      <div key={`${key}-${i}`} className="result-row" onDoubleClick={() => (owned ? playOne(owned) : downloadCatalog(c))}>
+      <div key={`${key}-${i}`} className="result-row" {...activate(() => (owned ? playOne(owned) : !isBusy(jobFor(key)) && downloadCatalog(c, tapAfter)))}>
         <div className="art">{c.artwork && <img src={c.artwork} alt="" />}</div>
         <div style={{ minWidth: 0 }}>
           <div className="t">{c.title}</div>
           <div className="s">
-            <span className="link" onClick={() => s.navigate({ kind: "search", query: c.artist })}>{c.artist}</span>
+            <span className="link" onClick={(e) => (e.stopPropagation(), s.navigate({ kind: "search", query: c.artist }))}>{c.artist}</span>
           </div>
         </div>
         <div className="s album">
@@ -290,7 +326,7 @@ export function SearchView({ query = "" }: { query?: string }) {
   const ytRow = (r: YtResult) => {
     const owned = libByYt.get(r.id) ?? trackById(jobFor(r.id)?.trackId);
     return (
-      <div key={r.id} className="result-row yt" onDoubleClick={() => (owned ? playOne(owned) : downloadYt(r))}>
+      <div key={r.id} className="result-row yt" {...activate(() => (owned ? playOne(owned) : !isBusy(jobFor(r.id)) && downloadYt(r, tapAfter)))}>
         <div className="art">
           <img src={r.thumbnail} alt="" />
         </div>
@@ -330,9 +366,36 @@ export function SearchView({ query = "" }: { query?: string }) {
 
   if (!q)
     return (
-      <div className="main-scroll">
+      // Own key so it opens at the top instead of keeping the results' scroll position
+      <div className="main-scroll" key="browse">
         {missing}
         <div className="page-pad">
+          {recent.length > 0 && (
+            <div className="recent-searches">
+              <div className="section-title">
+                <h2>최근 검색</h2>
+                <button onClick={() => (saveRecent([]), setRecent([]))}>모두 지우기</button>
+              </div>
+              {recent.map((r) => (
+                <div key={r} className="recent-row" onClick={() => s.navigate({ kind: "search", query: r })}>
+                  <Clock size={16} />
+                  <span className="ellipsis">{r}</span>
+                  <button
+                    className="icon-btn"
+                    title="지우기"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const next = recent.filter((x) => x !== r);
+                      saveRecent(next);
+                      setRecent(next);
+                    }}
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="section-title">
             <h2>모두 둘러보기</h2>
           </div>
@@ -478,11 +541,6 @@ export function SearchView({ query = "" }: { query?: string }) {
                 </div>
                 {yt.slice(0, 5).map((r) => ytRow(r))}
               </>
-            )}
-            {!ytWanted && (
-              <button className="btn btn-secondary btn-sm yt-more" onClick={() => setYtWantedFor(query.trim())}>
-                YouTube에서도 찾기
-              </button>
             )}
             {loading === 0 && !catalog.length && !yt.length && !libMatches.length && !albums.length && (
               <div className="empty">

@@ -155,7 +155,7 @@
 .m-app .quick .mini-play { display: none; }
 /* Shelves scroll sideways, like other music apps */
 .m-app .card-row { display: flex; overflow-x: auto; scroll-snap-type: x proximity; margin: 0 -16px; padding: 0 8px; gap: 0; }
-.m-app .card-row .card { flex: 0 0 148px; scroll-snap-align: start; padding: 8px; }
+.m-app .card-row .card { flex: 0 0 148px; min-width: 0; scroll-snap-align: start; padding: 8px; }
 .m-app .card .float-play { display: none; }
 .m-app .card .t { font-size: 14px; }
 .m-app .card .s { font-size: 13px; }
@@ -224,7 +224,6 @@
 .m-app .dl-item { grid-template-columns: 48px minmax(0, 1fr) 32px; gap: 12px; padding: 8px; }
 .m-app .dl-item .bar { grid-column: 2 / 3; grid-row: 2; }
 .m-app .lyrics-lines p { font-size: 24px; }
-.m-app .yt-more { margin: 24px auto 0; display: flex; }
 
 /* ---------- Motion ---------- */
 @keyframes m-down { from { transform: translateY(var(--drag, 0px)); } to { transform: translateY(100%); } }

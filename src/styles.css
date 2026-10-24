@@ -706,3 +706,12 @@ img { display: block; }
     animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important;
   }
 }
+
+/* Recent searches (empty search page) */
+.recent-searches { margin-bottom: 24px; }
+.recent-row {
+  display: flex; align-items: center; gap: 12px; padding: 8px 8px 8px 12px; border-radius: 6px;
+  color: var(--text-subdued); cursor: pointer;
+}
+.recent-row span { flex: 1; min-width: 0; color: var(--text); font-size: 15px; }
+.recent-row:hover, .recent-row:active { background: var(--tint); }

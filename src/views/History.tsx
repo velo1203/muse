@@ -5,6 +5,7 @@ import { useStore } from "../store";
 import type { Track } from "../types";
 import { Cover } from "../components/Art";
 import { Page } from "../components/Hero";
+import { activate } from "../platform";
 
 function dayLabel(ms: number) {
   const d = new Date(ms);
@@ -64,7 +65,7 @@ export function HistoryView() {
               <h2>{g.label}</h2>
             </div>
             {g.items.map(({ t, at }, i) => (
-              <div key={`${t.id}-${at}-${i}`} className="result-row history-row" onDoubleClick={() => playOrToggle([t.id], 0, t.title)}>
+              <div key={`${t.id}-${at}-${i}`} className="result-row history-row" {...activate(() => playOrToggle([t.id], 0, t.title))}>
                 <Cover src={t.cover} className="art" />
                 <div style={{ minWidth: 0 }}>
                   <div className="t">{t.title}</div>
@@ -72,7 +73,7 @@ export function HistoryView() {
                 </div>
                 <div className="s">{new Date(at).toLocaleTimeString("ko-KR", { hour: "numeric", minute: "2-digit" })}</div>
                 <div className="dur">{formatTime(t.duration)}</div>
-                <button className="icon-btn" onClick={() => playOrToggle([t.id], 0, t.title)}>
+                <button className="icon-btn" onClick={(e) => (e.stopPropagation(), playOrToggle([t.id], 0, t.title))}>
                   <Play size={16} fill="currentColor" />
                 </button>
               </div>

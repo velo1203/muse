@@ -8,6 +8,7 @@ import { useCurrentTrack, useStore } from "../store";
 import { applyInsets, native } from "../platform";
 import { Main } from "../views/Main";
 import { LyricsView } from "../views/Lyrics";
+import { rememberSearch } from "../views/Search";
 import { RightPanel } from "../components/RightPanel";
 import { Slider } from "../components/Slider";
 import { TrackMenu } from "../components/ContextMenu";
@@ -40,8 +41,7 @@ function SearchHeader() {
         onKeyDown={(e) => {
           if (e.key !== "Enter") return;
           input.current?.blur();
-          // Enter also asks for YouTube results (they don't load while typing on the phone)
-          window.dispatchEvent(new Event("muse-search-submit"));
+          rememberSearch(query);
         }}
       />
       {query && (
