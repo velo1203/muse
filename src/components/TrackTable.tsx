@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { Clock3, Heart, MoreHorizontal, Pause, Play } from "lucide-react";
+import { ArrowDown, ArrowUp, Clock3, Heart, MoreHorizontal, MoreVertical, Pause, Play } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { api, formatTime, qualityLabel, relativeDate } from "../api";
 import { useStore } from "../store";
 import type { Track } from "../types";
 import { Cover, Equalizer, popIcon } from "./Art";
 import { TrackMenu, type MenuState } from "./ContextMenu";
+import { isMobile } from "../platform";
 
 /** MIME type used when dragging tracks (onto playlists, or to reorder) */
 export const TRACKS_MIME = "application/x-muse-tracks";
@@ -22,11 +23,17 @@ interface Props {
   hideCover?: boolean;
   /** Called with the new order when rows are dragged within the table */
   onReorder?: (ids: string[]) => void;
+  /** Phone: show ↑/↓ buttons instead of drag & drop for reordering */
+  reorderMode?: boolean;
 }
 
 export function TrackTable({
-  tracks, label, playlistId, extra = "added", showAlbum = true, trackNumbers, hideCover, onReorder,
+  tracks, label, playlistId, extra: extraProp = "added", showAlbum: showAlbumProp = true, trackNumbers, hideCover, onReorder,
+  reorderMode,
 }: Props) {
+  // Phones get a compact list: cover, title / artist and a menu button
+  const extra = isMobile ? null : extraProp;
+  const showAlbum = isMobile ? false : showAlbumProp;
   const { current, playing, liked, playOrToggle, setLibrary, navigate } = useStore(
     useShallow((s) => ({
       current: s.current,
@@ -42,9 +49,19 @@ export function TrackTable({
   const [anchor, setAnchor] = useState<number | null>(null);
   const [dropAt, setDropAt] = useState<number | null>(null);
   const ids = tracks.map((t) => t.id);
-  const cols = ["24px", "minmax(160px, 4fr)", showAlbum && "minmax(100px, 2fr)", extra && "minmax(80px, 1fr)", "auto"]
-    .filter(Boolean)
-    .join(" ");
+  const cols = isMobile
+    ? "minmax(0, 1fr) auto"
+    : ["24px", "minmax(160px, 4fr)", showAlbum && "minmax(100px, 2fr)", extra && "minmax(80px, 1fr)", "auto"]
+        .filter(Boolean)
+        .join(" ");
+
+  const move = (i: number, by: number) => {
+    const j = i + by;
+    if (!onReorder || j < 0 || j >= ids.length) return;
+    const next = [...ids];
+    [next[i], next[j]] = [next[j], next[i]];
+    onReorder(next);
+  };
 
   // Drop selections that vanished (deleted / filtered out)
   useEffect(() => {
@@ -115,7 +132,7 @@ export function TrackTable({
                 dropAt === tracks.length && i === tracks.length - 1 ? "drop-after" : ""
               }`}
               style={{ gridTemplateColumns: cols }}
-              draggable
+              draggable={!isMobile}
               onDragStart={(e) => {
                 const moving = isSel ? selected : [t.id];
                 e.dataTransfer.setData(TRACKS_MIME, JSON.stringify(moving));
@@ -134,7 +151,7 @@ export function TrackTable({
                 setDropAt(e.clientY > r.top + r.height / 2 ? i + 1 : i);
               }}
               onDrop={(e) => drop(e, dropAt ?? i)}
-              onClick={(e) => select(i, e)}
+              onClick={(e) => (isMobile ? !reorderMode && playOrToggle(ids, i, label) : select(i, e))}
               onDoubleClick={() => playOrToggle(ids, i, label)}
               onContextMenu={(e) => {
                 e.preventDefault();
@@ -145,16 +162,18 @@ export function TrackTable({
                 setMenu({ x: e.clientX, y: e.clientY, tracks: menuTracks(t) });
               }}
             >
-              <div className="num">
+              {!isMobile && <div className="num">
                 <span className="n">{isCur && playing ? <Equalizer /> : trackNumbers ? t.trackNumber ?? "–" : i + 1}</span>
                 <button className="hover-play" onClick={(e) => (e.stopPropagation(), playOrToggle(ids, i, label))}>
                   {isCur && playing ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" />}
                 </button>
-              </div>
+              </div>}
               <div className="tt-title">
                 {!hideCover && <Cover src={t.cover} />}
                 <div style={{ minWidth: 0 }}>
-                  <div className="title-text">{t.title}</div>
+                  <div className="title-text">
+                    {isMobile && isCur && playing && <Equalizer />} {t.title}
+                  </div>
                   <div className="artist">
                     <span className="link" onClick={(e) => (e.stopPropagation(), navigate({ kind: "artist", name: t.artist }))}>
                       {t.artist}
@@ -189,15 +208,26 @@ export function TrackTable({
                   <Heart size={16} fill={isLiked ? "currentColor" : "none"} />
                 </button>
                 <span className="dur">{formatTime(t.duration)}</span>
-                <button
-                  className="icon-btn hover-only"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setMenu({ x: e.clientX, y: e.clientY, tracks: menuTracks(t) });
-                  }}
-                >
-                  <MoreHorizontal size={18} />
-                </button>
+                {reorderMode ? (
+                  <>
+                    <button className="icon-btn" disabled={i === 0} onClick={(e) => (e.stopPropagation(), move(i, -1))}>
+                      <ArrowUp size={20} />
+                    </button>
+                    <button className="icon-btn" disabled={i === tracks.length - 1} onClick={(e) => (e.stopPropagation(), move(i, 1))}>
+                      <ArrowDown size={20} />
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    className="icon-btn hover-only more-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMenu({ x: e.clientX, y: e.clientY, tracks: menuTracks(t) });
+                    }}
+                  >
+                    {isMobile ? <MoreVertical size={20} /> : <MoreHorizontal size={18} />}
+                  </button>
+                )}
               </div>
             </div>
           );

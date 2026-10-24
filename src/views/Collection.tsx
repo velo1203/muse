@@ -7,6 +7,7 @@ import { LikedArt, PlaylistArt, SongsArt } from "../components/Art";
 import { Page } from "../components/Hero";
 import { TrackTable } from "../components/TrackTable";
 import { PlaylistModal } from "../components/PlaylistModal";
+import { isMobile } from "../platform";
 
 type Kind = { kind: "songs" } | { kind: "liked" } | { kind: "playlist"; id: string };
 type Sort = "custom" | "title" | "artist" | "added" | "plays";
@@ -25,6 +26,7 @@ export function Collection({ view }: { view: Kind }) {
   const [menu, setMenu] = useState(false);
   const [filter, setFilter] = useState("");
   const [sort, setSort] = useState<Sort>("custom");
+  const [reordering, setReordering] = useState(false);
 
   useEffect(() => {
     setFilter("");
@@ -124,6 +126,11 @@ export function Collection({ view }: { view: Kind }) {
           >
             <ArrowDownUp size={14} /> {SORTS[sort]}
           </button>
+          {isMobile && canReorder && (
+            <button className={`btn btn-sm ${reordering ? "btn-primary" : "btn-secondary"}`} onClick={() => setReordering(!reordering)}>
+              {reordering ? "완료" : "순서 편집"}
+            </button>
+          )}
         </>
       }
     >
@@ -134,11 +141,16 @@ export function Collection({ view }: { view: Kind }) {
           playlistId={playlist?.id}
           extra={sort === "plays" ? "plays" : "added"}
           onReorder={canReorder ? async (ids) => s.setLibrary(await api.reorderPlaylist(playlist!.id, ids)) : undefined}
+          reorderMode={isMobile && canReorder && reordering}
         />
       ) : (
         <div className="empty">
           <h2>{view.kind === "liked" ? "좋아하는 곡이 여기에 표시돼요" : "이 플레이리스트에 곡을 추가해보세요"}</h2>
-          <div>곡을 검색해서 받은 뒤, 하트를 누르거나 곡을 왼쪽 목록으로 끌어다 놓으세요.</div>
+          <div>
+            {isMobile
+              ? "곡을 검색해서 받은 뒤, 하트를 누르거나 곡의 ⋮ 메뉴에서 담아보세요."
+              : "곡을 검색해서 받은 뒤, 하트를 누르거나 곡을 왼쪽 목록으로 끌어다 놓으세요."}
+          </div>
           <button className="pill-btn" onClick={() => s.navigate({ kind: "search" })}>
             곡 찾기
           </button>

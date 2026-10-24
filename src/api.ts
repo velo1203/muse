@@ -40,6 +40,8 @@ export const api = {
   importFiles: (paths: string[]) => invoke<number>("import_files", { paths }),
   getLyrics: (trackId: string, refresh = false) => invoke<Lyrics>("get_lyrics", { trackId, refresh }),
   recordPlay: (trackId: string) => invoke<Library>("record_play", { trackId }),
+  setLoudness: (trackId: string, loudness: number, peak: number) =>
+    invoke<Library>("set_loudness", { trackId, loudness, peak }),
   clearHistory: () => invoke<Library>("clear_history"),
   updateTrack: (trackId: string, edit: TrackEdit) => invoke<Library>("update_track", { trackId, edit }),
   setTrackCover: (trackId: string, source: string) => invoke<Library>("set_track_cover", { trackId, source }),

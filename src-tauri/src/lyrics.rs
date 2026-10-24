@@ -50,11 +50,16 @@ async fn fetch(title: &str, artist: &str, album: &str, duration: f64) -> Option<
         // Artist names often differ (romanization, "feat." credits): fall back to a free-text search
         results = search(vec![("q", format!("{title} {artist}"))]).await.unwrap_or_default();
     }
-    // Prefer synced lyrics whose length is close to ours
+    // Prefer synced lyrics whose length is close to ours, and the original script over a
+    // romanized copy (LRCLIB often has both for Korean / Japanese songs)
+    let original_script = |r: &serde_json::Value| {
+        let text = r["syncedLyrics"].as_str().or(r["plainLyrics"].as_str()).unwrap_or_default();
+        text.chars().any(|c| matches!(c, '\u{AC00}'..='\u{D7A3}' | '\u{3040}'..='\u{30FF}' | '\u{4E00}'..='\u{9FFF}'))
+    };
     results
         .iter()
         .filter(|r| (r["duration"].as_f64().unwrap_or(0.0) - duration).abs() < 8.0 || duration == 0.0)
-        .max_by_key(|r| r["syncedLyrics"].is_string() as u8)
+        .max_by_key(|r| (r["syncedLyrics"].is_string() as u8) * 2 + original_script(r) as u8)
         .or(results.first())
         .map(from_json)
         // The search worked but found nothing: remember that as "no lyrics"

@@ -23,6 +23,7 @@ uuid = { version = "1", features = ["v4"] }
 urlencoding = "2"
 tauri-plugin-dialog = "2"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+lofty = "0.25.4"
 
 [profile.release]
 codegen-units = 1

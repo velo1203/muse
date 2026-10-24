@@ -2,13 +2,14 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Download, Heart, ListEnd, ListPlus, ListStart, Play, Plus } from "lucide-react";
 import { useStore } from "../store";
 import type { AfterDownload } from "../types";
+import { useSheetClose } from "../mobile/motion";
 
 /**
  * Menu for a search result that isn't in the library yet: every action downloads
  * the song first and then applies the chosen follow-up (play, queue, like, playlist).
  */
 export function DownloadMenu({
-  x, y, title, onPick, onClose,
+  x, y, title, onPick, onClose: closeNow,
 }: {
   x: number;
   y: number;
@@ -16,6 +17,8 @@ export function DownloadMenu({
   onPick: (after?: AfterDownload) => void;
   onClose: () => void;
 }) {
+  // On phones the sheet slides down before it goes away
+  const [closing, onClose] = useSheetClose(closeNow);
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ left: x, top: y });
   const [picking, setPicking] = useState(false);
@@ -48,7 +51,7 @@ export function DownloadMenu({
   };
 
   return (
-    <div className="ctx" ref={ref} style={pos} onContextMenu={(e) => e.preventDefault()}>
+    <div className={`ctx ${closing ? "closing" : ""}`} ref={ref} style={pos} onContextMenu={(e) => e.preventDefault()}>
       <div className="sub-label ellipsis">{title}</div>
       {picking ? (
         <>

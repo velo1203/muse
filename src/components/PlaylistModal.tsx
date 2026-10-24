@@ -2,10 +2,11 @@ import { useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
 import type { Playlist } from "../types";
+import { useSheetClose } from "../mobile/motion";
 
 /** Create a playlist (optionally pre-filled with tracks), or edit one when `playlist` is given. */
 export function PlaylistModal({
-  playlist, trackIds, onCreated, onClose,
+  playlist, trackIds, onCreated, onClose: closeNow,
 }: {
   playlist?: Playlist;
   trackIds?: string[];
@@ -13,6 +14,7 @@ export function PlaylistModal({
   onCreated?: (id: string) => void;
   onClose: () => void;
 }) {
+  const [closing, onClose] = useSheetClose(closeNow);
   const { library, setLibrary, navigate, showToast } = useStore();
   const [name, setName] = useState(playlist?.name ?? `내 플레이리스트 #${library.playlists.length + 1}`);
   const [desc, setDesc] = useState(playlist?.description ?? "");
@@ -34,7 +36,7 @@ export function PlaylistModal({
   };
 
   return (
-    <div className="modal-bg" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className={`modal-bg ${closing ? "closing" : ""}`} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal">
         <h2>{playlist ? "세부 정보 편집" : "새 플레이리스트"}</h2>
         <input
