@@ -8,6 +8,7 @@ import { api } from "../api";
 import { useStore } from "../store";
 import type { Track } from "../types";
 import { isMobile } from "../platform";
+import { useSheetClose } from "../mobile/motion";
 
 export interface MenuState {
   x: number;
@@ -15,7 +16,9 @@ export interface MenuState {
   tracks: Track[];
 }
 
-export function TrackMenu({ menu, onClose, playlistId }: { menu: MenuState; onClose: () => void; playlistId?: string }) {
+export function TrackMenu({ menu, onClose: closeNow, playlistId }: { menu: MenuState; onClose: () => void; playlistId?: string }) {
+  // On phones the sheet slides down before it goes away
+  const [closing, onClose] = useSheetClose(closeNow);
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ left: menu.x, top: menu.y });
   const { library, addToQueue, playNext, setLibrary, showToast, navigate, openModal } = useStore();
@@ -59,7 +62,7 @@ export function TrackMenu({ menu, onClose, playlistId }: { menu: MenuState; onCl
   };
 
   return (
-    <div className="ctx" ref={ref} style={pos} onContextMenu={(e) => e.preventDefault()}>
+    <div className={`ctx ${closing ? "closing" : ""}`} ref={ref} style={pos} onContextMenu={(e) => e.preventDefault()}>
       {tracks.length > 1 && <div className="sub-label">{tracks.length}곡 선택됨</div>}
       {picking ? (
         <>

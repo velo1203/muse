@@ -5,6 +5,7 @@ import { api, formatTime, qualityLabel } from "../api";
 import { useStore } from "../store";
 import type { CatalogTrack, Track, YtResult } from "../types";
 import { Cover } from "./Art";
+import { useSheetClose } from "../mobile/motion";
 
 function InfoTab({ track, onClose }: { track: Track; onClose: () => void }) {
   const { setLibrary, showToast } = useStore();
@@ -208,12 +209,13 @@ function SourceTab({ track, onClose }: { track: Track; onClose: () => void }) {
   );
 }
 
-export function EditTrackModal({ trackId, initialTab = "info", onClose }: { trackId: string; initialTab?: "info" | "source"; onClose: () => void }) {
+export function EditTrackModal({ trackId, initialTab = "info", onClose: closeNow }: { trackId: string; initialTab?: "info" | "source"; onClose: () => void }) {
+  const [closing, onClose] = useSheetClose(closeNow);
   const track = useStore((s) => s.library.tracks.find((t) => t.id === trackId));
   const [tab, setTab] = useState(initialTab);
   if (!track) return null;
   return (
-    <div className="modal-bg" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className={`modal-bg ${closing ? "closing" : ""}`} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal wide">
         <div className="modal-tabs">
           <button className={`chip ${tab === "info" ? "on" : ""}`} onClick={() => setTab("info")}>

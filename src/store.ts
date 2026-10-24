@@ -495,6 +495,14 @@ export const useStore = create<State & Actions>((set, get) => {
         // Hardware back: close the player sheet / modal, then go back; false lets Android leave the app
         w.__museBack = () => {
           const st = get();
+          // Menus keep their own state: close them the way a tap outside / Escape would
+          const sheet = document.querySelector<HTMLElement>(".ctx:not(.closing)");
+          if (sheet) {
+            const bg = sheet.closest<HTMLElement>(".m-sheet-bg");
+            if (bg) bg.click();
+            else window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+            return true;
+          }
           if (st.modal) return st.openModal(null), true;
           if (st.fullPlayer) return st.setFullPlayer(null), true;
           if (st.back.length) return st.goBack(), true;

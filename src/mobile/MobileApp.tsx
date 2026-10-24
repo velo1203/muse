@@ -14,6 +14,7 @@ import { TrackMenu } from "../components/ContextMenu";
 import { EditTrackModal } from "../components/EditTrackModal";
 import { PlaylistModal } from "../components/PlaylistModal";
 import type { View } from "../types";
+import { pop, usePresence, usePullDown, useSheetClose, useSwipeX } from "./motion";
 
 const TABS: { kind: View["kind"]; label: string; icon: typeof Home; to: View }[] = [
   { kind: "home", label: "홈", icon: Home, to: { kind: "home" } },
@@ -90,34 +91,42 @@ function TopBar() {
 function MiniPlayer() {
   const s = useStore();
   const track = useCurrentTrack();
+  const swipe = useSwipeX(s.next, s.prev);
   if (!track) return null;
   const liked = s.library.liked.includes(track.id);
   const pct = s.duration ? (s.time / s.duration) * 100 : 0;
   return (
-    <div className="m-mini" onClick={() => s.setFullPlayer("player")}>
-      <div className="m-mini-art">{track.cover ? <img src={fileUrl(track.cover)} alt="" /> : <Music size={20} />}</div>
-      <div className="m-mini-text">
-        <div className="t">{track.title}</div>
-        <div className="s">{track.artist}</div>
+    <div className="m-mini" onClick={() => !swipe.wasDrag() && s.setFullPlayer("player")} {...swipe.handlers}>
+      <div className="m-mini-inner" ref={swipe.ref}>
+        <div className="m-mini-art">
+          {track.cover ? <img key={track.cover} className="fade-in" src={fileUrl(track.cover)} alt="" /> : <Music size={20} />}
+        </div>
+        <div className="m-mini-text" key={track.id}>
+          <div className="t">{track.title}</div>
+          <div className="s">{track.artist}</div>
+        </div>
+        <button
+          className={`icon-btn ${liked ? "liked-on" : ""}`}
+          onClick={async (e) => {
+            e.stopPropagation();
+            if (!liked) pop(e.currentTarget);
+            s.setLibrary(await api.setLiked([track.id], !liked));
+          }}
+        >
+          <Heart size={22} fill={liked ? "currentColor" : "none"} />
+        </button>
+        <button
+          className="icon-btn m-mini-play"
+          onClick={(e) => {
+            e.stopPropagation();
+            s.togglePlay();
+          }}
+        >
+          <span key={String(s.playing)} className="pp-swap">
+            {s.playing ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" />}
+          </span>
+        </button>
       </div>
-      <button
-        className={`icon-btn ${liked ? "liked-on" : ""}`}
-        onClick={async (e) => {
-          e.stopPropagation();
-          s.setLibrary(await api.setLiked([track.id], !liked));
-        }}
-      >
-        <Heart size={22} fill={liked ? "currentColor" : "none"} />
-      </button>
-      <button
-        className="icon-btn m-mini-play"
-        onClick={(e) => {
-          e.stopPropagation();
-          s.togglePlay();
-        }}
-      >
-        {s.playing ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" />}
-      </button>
       <div className="m-mini-progress">
         <div style={{ width: `${pct}%` }} />
       </div>
@@ -127,13 +136,14 @@ function MiniPlayer() {
 
 function SleepSheet({ onClose }: { onClose: () => void }) {
   const { sleep, setSleep } = useStore();
+  const [closing, close] = useSheetClose(onClose);
   const pick = (v: "track" | number | null) => () => {
     setSleep(v);
-    onClose();
+    close();
   };
   return (
-    <div className="m-sheet-bg" onClick={onClose}>
-      <div className="ctx m-sheet" onClick={(e) => e.stopPropagation()}>
+    <div className="m-sheet-bg" onClick={close}>
+      <div className={`ctx m-sheet ${closing ? "closing" : ""}`} onClick={(e) => e.stopPropagation()}>
         <div className="sub-label">수면 타이머</div>
         {[5, 15, 30, 45, 60, 90].map((m) => (
           <button key={m} onClick={pick(m)}>
@@ -156,14 +166,15 @@ function FullPlayer() {
   const track = useCurrentTrack();
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [sleepOpen, setSleepOpen] = useState(false);
-  const page = s.fullPlayer;
+  const { shown: page, closing } = usePresence(s.fullPlayer);
+  const pull = usePullDown(() => s.setFullPlayer(null));
   if (!page || !track) return null;
   const liked = s.library.liked.includes(track.id);
 
   return (
-    <div className="m-full">
-      {track.cover && <img className="m-full-bg" src={fileUrl(track.cover)} alt="" />}
-      <div className="m-full-head">
+    <div className={`m-full ${closing ? "closing" : ""}`} ref={pull.ref}>
+      {track.cover && <img key={track.cover} className="m-full-bg fade-in" src={fileUrl(track.cover)} alt="" />}
+      <div className="m-full-head" {...pull.handlers}>
         <button className="icon-btn" onClick={() => (page === "player" ? s.setFullPlayer(null) : s.setFullPlayer("player"))}>
           {page === "player" ? <ChevronDown size={28} /> : <ChevronLeft size={28} />}
         </button>
@@ -178,8 +189,10 @@ function FullPlayer() {
 
       {page === "player" && (
         <div className="m-full-body">
-          <div className="m-full-art">{track.cover ? <img src={fileUrl(track.cover)} alt="" /> : <Music size={80} />}</div>
-          <div className="m-full-title">
+          <div className="m-full-art" {...pull.handlers}>
+            {track.cover ? <img key={track.cover} className="fade-in" src={fileUrl(track.cover)} alt="" /> : <Music size={80} />}
+          </div>
+          <div className="m-full-title" key={track.id}>
             <div style={{ minWidth: 0 }}>
               <div className="t">{track.title}</div>
               <div
@@ -194,7 +207,10 @@ function FullPlayer() {
             </div>
             <button
               className={`icon-btn ${liked ? "liked-on" : ""}`}
-              onClick={async () => s.setLibrary(await api.setLiked([track.id], !liked))}
+              onClick={async (e) => {
+                if (!liked) pop(e.currentTarget);
+                s.setLibrary(await api.setLiked([track.id], !liked));
+              }}
             >
               <Heart size={28} fill={liked ? "currentColor" : "none"} />
             </button>
@@ -214,7 +230,9 @@ function FullPlayer() {
               <SkipBack size={34} fill="currentColor" />
             </button>
             <button className="m-full-play" onClick={s.togglePlay}>
-              {s.playing ? <Pause size={34} fill="currentColor" /> : <Play size={34} fill="currentColor" style={{ marginLeft: 3 }} />}
+              <span key={String(s.playing)} className="pp-swap">
+                {s.playing ? <Pause size={34} fill="currentColor" /> : <Play size={34} fill="currentColor" style={{ marginLeft: 3 }} />}
+              </span>
             </button>
             <button className="icon-btn" onClick={s.next}>
               <SkipForward size={34} fill="currentColor" />
@@ -287,7 +305,20 @@ export function MobileApp() {
   const modal = useStore((s) => s.modal);
   const openModal = useStore((s) => s.openModal);
   const view = useStore((s) => s.view);
+  const backDepth = useStore((s) => s.back.length);
   const fullPlayer = useStore((s) => s.fullPlayer);
+  // Page transition: going deeper slides in from the right, going back from the left,
+  // switching tabs fades. The search page keeps its key while typing so it isn't re-mounted.
+  const pageKey = view.kind === "search" ? "search" : JSON.stringify(view);
+  const nav = useRef({ key: pageKey, depth: backDepth, dir: "fade" });
+  if (nav.current.key !== pageKey) {
+    const tab = ROOTS.has(view.kind);
+    nav.current = {
+      key: pageKey,
+      depth: backDepth,
+      dir: tab && backDepth <= nav.current.depth ? "fade" : backDepth > nav.current.depth ? "forward" : "back",
+    };
+  }
 
   useEffect(() => {
     useStore.getState().init();
@@ -304,7 +335,9 @@ export function MobileApp() {
     <div className={`m-app ${fullPlayer ? "m-player-open" : ""}`}>
       <TopBar />
       <main className={`m-main view-${view.kind}`}>
-        <Main />
+        <div key={pageKey} className={`m-page enter-${nav.current.dir}`}>
+          <Main />
+        </div>
       </main>
       <MiniPlayer />
       <TabBar />
