@@ -3,7 +3,7 @@ import { GripVertical, Heart, Mic2, Music, Pencil, X } from "lucide-react";
 import { api, fileUrl, formatTime, qualityLabel } from "../api";
 import { useCurrentTrack, useStore } from "../store";
 import type { Track } from "../types";
-import { Cover, Equalizer } from "./Art";
+import { Cover, Equalizer, popIcon } from "./Art";
 
 function QueueItem({
   t, cur, onPlay, onRemove, drag,
@@ -61,7 +61,7 @@ export function RightPanel() {
         {s.rightPanel === "now" ? (
           track ? (
             <>
-              <div className="np-art">{track.cover ? <img src={fileUrl(track.cover)} alt="" /> : <Music size={64} />}</div>
+              <div className="np-art">{track.cover ? <img key={track.cover} src={fileUrl(track.cover)} alt="" /> : <Music size={64} />}</div>
               <div className="np-title">
                 <div style={{ minWidth: 0 }}>
                   <h3>{track.title}</h3>
@@ -71,7 +71,10 @@ export function RightPanel() {
                 </div>
                 <button
                   className={`icon-btn ${liked ? "liked-on" : ""}`}
-                  onClick={async () => s.setLibrary(await api.setLiked([track.id], !liked))}
+                  onClick={async (e) => {
+                    if (!liked) popIcon(e);
+                    s.setLibrary(await api.setLiked([track.id], !liked));
+                  }}
                 >
                   <Heart size={22} fill={liked ? "currentColor" : "none"} />
                 </button>

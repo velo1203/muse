@@ -14,6 +14,7 @@ import { Main } from "./views/Main";
 
 export default function App() {
   const toast = useStore((s) => s.toast);
+  const view = useStore((s) => s.view);
   const modal = useStore((s) => s.modal);
   const openModal = useStore((s) => s.openModal);
   const track = useCurrentTrack();
@@ -45,7 +46,10 @@ export default function App() {
         <TopBar />
         <Sidebar />
         <main className="main panel">
-          <Main />
+          {/* A new key per destination replays the enter animation; search stays mounted while typing */}
+          <div className="view" key={view.kind === "search" ? "search" : JSON.stringify(view)}>
+            <Main />
+          </div>
         </main>
         <RightPanel />
         <PlayerBar />

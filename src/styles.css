@@ -166,7 +166,7 @@ img { display: block; }
 .chip {
   display: inline-flex; align-items: center; gap: 4px; min-height: var(--control-sm); padding: 4px 12px; border-radius: 9999px;
   background: var(--tint); font-size: 14px; color: var(--text); white-space: nowrap;
-  transition: background-color .15s var(--ease);
+  transition: background-color .15s var(--ease), color .15s var(--ease);
 }
 .chip:hover { background: var(--tint-hi); }
 .chip.on { background: var(--text); color: var(--on-accent); }
@@ -440,7 +440,7 @@ img { display: block; }
 .q-item .s { font-size: 14px; color: var(--text-subdued); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
 .q-item.cur .t { color: var(--accent); }
 .q-item .grip { color: var(--text-dim); cursor: grab; flex-shrink: 0; margin-left: -4px; }
-.q-item .q-remove { opacity: 0; }
+.q-item .q-remove { opacity: 0; transition: opacity .15s, color .15s var(--ease), transform .15s var(--ease); }
 .q-item:hover .q-remove { opacity: 1; }
 .q-label { font-weight: 700; margin: 24px 0 8px; font-size: 16px; color: var(--text); }
 .q-row { display: flex; justify-content: space-between; align-items: center; }
@@ -483,10 +483,13 @@ img { display: block; }
 /* Slider */
 .slider { --pct: 0%; flex: 1; height: 12px; display: flex; align-items: center; position: relative; cursor: pointer; }
 .slider .track { width: 100%; height: 4px; border-radius: 2px; background: rgba(255,255,255,.3); overflow: hidden; }
-.slider .fill { height: 100%; width: var(--pct); background: var(--text); border-radius: 2px; }
+.slider .fill { height: 100%; width: var(--pct); background: var(--text); border-radius: 2px; transition: background-color .15s; }
 .slider:hover .fill, .slider.drag .fill { background: var(--accent); }
-.slider .knob { position: absolute; left: var(--pct); width: 12px; height: 12px; border-radius: 50%; background: #fff; transform: translateX(-50%); display: none; box-shadow: 0 2px 4px rgba(0,0,0,.5); }
-.slider:hover .knob, .slider.drag .knob { display: block; }
+.slider .knob {
+  position: absolute; left: var(--pct); width: 12px; height: 12px; border-radius: 50%; background: #fff;
+  transform: translateX(-50%) scale(0); box-shadow: 0 2px 4px rgba(0,0,0,.5); transition: transform .15s var(--ease);
+}
+.slider:hover .knob, .slider.drag .knob { transform: translateX(-50%) scale(1); }
 .vol { width: 93px; flex: none; margin-left: 4px; }
 
 /* Menus */
@@ -599,11 +602,11 @@ img { display: block; }
 .lyrics-lines { padding: 30vh 48px 40vh; max-width: 900px; }
 .lyrics-lines p {
   font-size: clamp(22px, 2.6vw, 32px); font-weight: 800; letter-spacing: -0.03em; line-height: 1.35; margin: 0 0 16px;
-  color: rgba(255,255,255,.3); cursor: pointer; transition: color .25s;
+  color: rgba(255,255,255,.3); cursor: pointer; transition: color .25s, transform .35s var(--ease); transform-origin: left center;
 }
 .lyrics-lines p:hover { color: rgba(255,255,255,.7); text-decoration: underline; }
 .lyrics-lines p.past { color: rgba(255,255,255,.5); }
-.lyrics-lines p.on { color: #fff; }
+.lyrics-lines p.on { color: #fff; transform: scale(1.03); }
 .lyrics-lines.plain { padding: 24px 48px 80px; }
 .lyrics-lines.plain p { color: rgba(255,255,255,.85); cursor: default; font-size: 22px; margin-bottom: 8px; text-decoration: none; }
 .lyrics-credit { color: var(--text-dim); font-size: 12px; padding: 0 48px 32px; }
@@ -647,7 +650,7 @@ img { display: block; }
 
 /* Result row actions: ⊕ menu + download pill */
 .res-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
-.res-actions > .icon-btn { width: var(--control-sm); height: var(--control-sm); opacity: 0; }
+.res-actions > .icon-btn { width: var(--control-sm); height: var(--control-sm); opacity: 0; transition: opacity .15s, color .15s var(--ease), transform .15s var(--ease); }
 .result-row:hover .res-actions > .icon-btn, .top-card .res-actions > .icon-btn, .res-actions > .icon-btn:focus-visible { opacity: 1; }
 .dl-btn.icon { width: var(--control-sm); padding: 0; }
 .dl-btn.done.icon, .dl-btn.busy.icon { width: var(--control-sm); padding: 0; }
@@ -656,3 +659,50 @@ img { display: block; }
 .hero-art.liked-art { background: var(--accent); color: var(--on-accent); }
 .hero-art.songs-art { background: #6d5dfc; color: #fff; }
 .hero-art.history-art { background: #2f6f73; color: #fff; }
+
+/* ============ Motion ============ */
+/* Views, panels and overlays enter; rows fade their hover; icons swap with a small turn.
+   No fill-mode: a transform held after the animation would make fixed menus position against the view. */
+.view { height: 100%; animation: view-in .28s var(--ease); }
+@keyframes view-in { from { opacity: 0; transform: translateY(8px); } }
+
+.ambient img { animation: ambient-in 1.2s ease; }
+@keyframes ambient-in { from { opacity: 0; } }
+
+.thumb img, .card .art img, .hero-art img, .np-art img, .quick .thumb img, .result-row .art img, .top-card .art img {
+  animation: img-in .35s ease;
+}
+@keyframes img-in { from { opacity: 0; } }
+.np-art img { animation: np-in .45s var(--ease); }
+@keyframes np-in { from { opacity: 0; transform: scale(.96); } }
+
+.right { animation: right-in .3s var(--ease); }
+@keyframes right-in { from { opacity: 0; transform: translateX(16px); } }
+
+.ctx { animation: ctx-in .14s var(--ease); transform-origin: top left; }
+.ctx.popup { transform-origin: bottom right; }
+@keyframes ctx-in { from { opacity: 0; transform: scale(.96); } }
+
+.modal-bg { animation: fade-in .2s ease; }
+.modal { animation: modal-in .28s var(--ease); }
+@keyframes modal-in { from { opacity: 0; transform: translateY(12px) scale(.97); } }
+@keyframes fade-in { from { opacity: 0; } }
+.file-drop { animation: fade-in .15s ease; }
+.file-drop svg { animation: dl-nudge 1.2s var(--ease) infinite; }
+
+.tool-status { animation: view-in .3s var(--ease); }
+
+/* Play ↔ pause: each icon is a new element, so it animates as it appears */
+.pl-play svg, .play-fab svg, .mini-play svg, .tt-row .num .hover-play { animation: icon-swap .2s var(--ease); }
+@keyframes icon-swap { from { opacity: 0; transform: scale(.6) rotate(-30deg); } }
+
+.icon-btn svg.pop { animation: like-pop .45s var(--ease); }
+@keyframes like-pop { 0% { transform: scale(1); } 30% { transform: scale(.7); } 65% { transform: scale(1.3); } 100% { transform: scale(1); } }
+
+.lib-item, .tt-row, .result-row, .q-item, .dl-item, .match, .ctx button, .sel-opt { transition: background-color .12s; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important;
+  }
+}

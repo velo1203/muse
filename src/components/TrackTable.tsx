@@ -4,7 +4,7 @@ import { useShallow } from "zustand/react/shallow";
 import { api, formatTime, qualityLabel, relativeDate } from "../api";
 import { useStore } from "../store";
 import type { Track } from "../types";
-import { Cover, Equalizer } from "./Art";
+import { Cover, Equalizer, popIcon } from "./Art";
 import { TrackMenu, type MenuState } from "./ContextMenu";
 import { isMobile } from "../platform";
 
@@ -201,6 +201,7 @@ export function TrackTable({
                   className={`icon-btn hover-only ${isLiked ? "on liked-on" : ""}`}
                   onClick={async (e) => {
                     e.stopPropagation();
+                    if (!isLiked) popIcon(e);
                     setLibrary(await api.setLiked([t.id], !isLiked));
                   }}
                 >

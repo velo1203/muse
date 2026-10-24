@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import { api, formatTime } from "../api";
 import { useCurrentTrack, useStore } from "../store";
-import { Cover } from "./Art";
+import { Cover, popIcon } from "./Art";
 import { Slider } from "./Slider";
 
 function SleepMenu({ onClose }: { onClose: () => void }) {
@@ -87,7 +87,10 @@ export function PlayerBar() {
             </div>
             <button
               className={`icon-btn ${liked ? "liked-on" : ""}`}
-              onClick={async () => s.setLibrary(await api.setLiked([track.id], !liked))}
+              onClick={async (e) => {
+                if (!liked) popIcon(e);
+                s.setLibrary(await api.setLiked([track.id], !liked));
+              }}
               title={liked ? "좋아요 취소" : "좋아요"}
             >
               <Heart size={16} fill={liked ? "currentColor" : "none"} />
