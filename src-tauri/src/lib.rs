@@ -6,6 +6,7 @@ mod lyrics;
 mod media;
 mod net;
 mod tools;
+mod youtube;
 mod ytdlp;
 
 use catalog::{CatalogAlbum, CatalogTrack};
@@ -48,8 +49,12 @@ async fn catalog_album(id: u64) -> Result<AlbumDetail, String> {
 
 #[tauri::command]
 async fn youtube_search(app: AppHandle, query: String) -> Result<Vec<ytdlp::YtResult>, String> {
+    // The web API needs no yt-dlp; only the fallback does
+    if let Ok(results) = youtube::search(&query, 20).await {
+        return Ok(results);
+    }
     tools::ensure_ytdlp(&app).await?;
-    ytdlp::search(&query, 15).await
+    ytdlp::search_ytdlp(&query, 15).await
 }
 
 /// Entries behind a pasted YouTube video / playlist link.
@@ -234,7 +239,7 @@ async fn run_download(app: &AppHandle, store: &SharedStore, req: DownloadRequest
     let (mut track_number, mut disc_number, mut year, mut genre) = (req.track_number, req.disc_number, req.year.clone(), req.genre.clone());
     let mut cover_urls: Vec<String> = req.artwork.clone().filter(|a| !a.is_empty()).into_iter().collect();
     if cover_urls.is_empty() {
-        if let Some(found) = catalog::lookup(&req.title, &req.artist).await {
+        if let Some(found) = catalog::lookup(&req.title, &req.artist, downloaded.duration.or(req.duration)).await {
             if album.is_empty() {
                 album = found.album;
                 track_number = found.track_number;
@@ -469,7 +474,7 @@ async fn repair_library(app: AppHandle, store: State<'_, SharedStore>) -> Result
     let mut fixed = 0;
     for t in missing {
         let mut urls = vec![];
-        if let Some(found) = catalog::lookup(&t.title, &t.artist).await {
+        if let Some(found) = catalog::lookup(&t.title, &t.artist, Some(t.duration)).await {
             urls.push(found.artwork);
         }
         urls.push(format!("https://i.ytimg.com/vi/{}/maxresdefault.jpg", t.youtube_id));

@@ -9,7 +9,7 @@ import { DownloadMenu } from "../components/DownloadMenu";
 import { activate, isMobile } from "../platform";
 import { RetryToolsButton, useToolStatus } from "../components/ToolSetup";
 
-type Tab = "all" | "songs" | "albums" | "youtube" | "library";
+type Tab = "all" | "songs" | "albums" | "catalog" | "library";
 
 const GENRES = [
   { name: "K-POP", q: "K-POP", c: "#d94b6a" },
@@ -50,7 +50,8 @@ export function rememberSearch(query: string) {
   saveRecent([q, ...loadRecent().filter((x) => x.toLowerCase() !== q.toLowerCase())].slice(0, 10));
 }
 
-// yt-dlp searches run one at a time: on phones parallel ones starve each other and time out
+// Searches run one at a time: if YouTube's web API fails they fall back to yt-dlp, and on phones
+// parallel yt-dlp processes starve each other and time out
 /** A download that's still on its way (a failed one can be retried by tapping again). */
 export const isBusy = (j?: DownloadJob) => !!j && j.status !== "error" && j.status !== "done";
 
@@ -59,15 +60,40 @@ let ytQueue: Promise<unknown> = Promise.resolve();
 const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
 export const catalogKey = (c: { artist: string; title: string }) => `${norm(c.artist)}|${norm(c.title)}`;
 
-/** "Artist - Title (Official Audio)" → { artist, title } */
+const isTopic = (channel: string) => / - (Topic|주제)$/.test(channel);
+
+/** "Artist - Title (Official Audio)" / "[MV] Artist _ Title" / "Artist 'Title' | 가사" → { artist, title } */
 export function parseYtTitle(r: YtResult) {
   const clean = r.title
-    .replace(/\[[^\]]*\]|\((?:official|lyrics?|audio|mv|m\/v|music video|visualizer)[^)]*\)/gi, "")
+    .split(/\s+[|｜]\s+/)[0]
+    .replace(/\[[^\]]*\]|【[^】]*】|\((?:official|lyrics?|audio|mv|m\/v|music video|visualizer|가사)[^)]*\)/gi, "")
+    .replace(/\s+(?:official\s+)?(?:m\/v|mv|music video|video|audio|lyrics?|가사)\s*$/i, "")
     .replace(/\s+/g, " ")
     .trim();
-  const m = clean.match(/^(.+?)\s+[-–—]\s+(.+)$/);
+  const m = clean.match(/^(.+?)\s+[-–—_]\s+(.+)$/);
   if (m) return { artist: m[1].trim(), title: m[2].replace(/["'“”‘’]/g, "").trim() };
-  return { artist: r.channel.replace(/ - Topic$/, ""), title: clean };
+  return { artist: r.channel.replace(/ - (Topic|주제)$/, ""), title: clean.replace(/["'“”‘’]/g, "") };
+}
+
+// Uploads that usually aren't the song itself (unless the search asks for them)
+const NOT_SONG = /1\s*시간|1\s*hour|모음|playlist|플레이리스트|노래방|karaoke|reaction|리액션|직캠|fancam|교차편집|cover|커버|tutorial|강좌|피아노|piano|mashup|매시업|live|라이브|콘서트|concert|full album|풀앨범|#|응원법|teaser|티저|behind|비하인드|making|메이킹|dance practice|안무|interview|인터뷰|reaction/i;
+
+/** Keeps YouTube's order but moves official uploads up and compilations / covers / long videos down. */
+function rankSongs(results: YtResult[], query: string): YtResult[] {
+  const q = query.toLowerCase();
+  const score = (r: YtResult) => {
+    const t = r.title.toLowerCase();
+    let s = 0;
+    if (isTopic(r.channel) || /official|공식/i.test(r.channel) || /official audio/i.test(t)) s += 1;
+    const odd = t.match(NOT_SONG);
+    if (odd && !q.includes(odd[0].toLowerCase())) s -= 2;
+    if ((r.duration ?? 0) > 600) s -= 3;
+    return s;
+  };
+  return results
+    .map((r, i) => ({ r, i, s: score(r) }))
+    .sort((a, b) => b.s - a.s || a.i - b.i)
+    .map((x) => x.r);
 }
 
 export function DlButton({
@@ -198,6 +224,7 @@ export function SearchView({ query = "" }: { query?: string }) {
   const [catalog, setCatalog] = useState<CatalogTrack[]>([]);
   const [albums, setAlbums] = useState<CatalogAlbum[]>([]);
   const [yt, setYt] = useState<YtResult[]>([]);
+  const [ytLoading, setYtLoading] = useState(false);
   const [linked, setLinked] = useState<YtResult[] | null>(null);
   const [loading, setLoading] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -245,16 +272,20 @@ export function SearchView({ query = "" }: { query?: string }) {
   useEffect(() => {
     const q = query.trim();
     setYt([]);
+    setYtLoading(false);
     if (!q || isYoutubeUrl(q)) return;
     let stale = false;
-    // Phones wait for a longer pause in typing, since each search starts a slow yt-dlp process
+    setYtLoading(true);
     const timer = setTimeout(() => {
       setLoading((n) => n + 1);
       ytQueue = ytQueue
-        .then(() => (stale ? null : api.youtubeSearch(q).then((r) => !stale && setYt(r))))
+        .then(() => (stale ? null : api.youtubeSearch(q).then((r) => !stale && setYt(rankSongs(r, q)))))
         .catch((e) => !stale && setError(String(e)))
-        .finally(() => setLoading((n) => n - 1));
-    }, isMobile ? 900 : 450);
+        .finally(() => {
+          setLoading((n) => n - 1);
+          if (!stale) setYtLoading(false);
+        });
+    }, 400);
     return () => {
       stale = true;
       clearTimeout(timer);
@@ -323,20 +354,25 @@ export function SearchView({ query = "" }: { query?: string }) {
     );
   };
 
-  const ytRow = (r: YtResult) => {
+  const ytRow = (r: YtResult, compact = false) => {
     const owned = libByYt.get(r.id) ?? trackById(jobFor(r.id)?.trackId);
+    const p = parseYtTitle(r);
     return (
-      <div key={r.id} className="result-row yt" {...activate(() => (owned ? playOne(owned) : !isBusy(jobFor(r.id)) && downloadYt(r, tapAfter)))}>
+      <div key={r.id} className="result-row yt" title={r.title} {...activate(() => (owned ? playOne(owned) : !isBusy(jobFor(r.id)) && downloadYt(r, tapAfter)))}>
         <div className="art">
           <img src={r.thumbnail} alt="" />
         </div>
         <div style={{ minWidth: 0 }}>
-          <div className="t">{r.title}</div>
-          <div className="s">{r.channel}</div>
+          <div className="t">{p.title}</div>
+          <div className="s">
+            {isTopic(r.channel) && <span className="tag">공식 음원</span>}
+            {p.artist}
+            {!isTopic(r.channel) && p.artist !== r.channel && <span className="yt-channel"> · {r.channel}</span>}
+          </div>
         </div>
-        <div className="s album">{r.channel.endsWith(" - Topic") ? "공식 음원 (Topic)" : ""}</div>
+        <div className="s album">{r.channel}</div>
         <div className="dur">{formatTime(r.duration)}</div>
-        <ResultActions title={r.title} owned={owned} job={jobFor(r.id)} onStart={(after) => downloadYt(r, after)} />
+        <ResultActions compact={compact} title={r.title} owned={owned} job={jobFor(r.id)} onStart={(after) => downloadYt(r, after)} />
       </div>
     );
   };
@@ -443,8 +479,10 @@ export function SearchView({ query = "" }: { query?: string }) {
     );
   }
 
-  const top = catalog[0];
-  const topOwned = top && (libByKey.get(catalogKey(top)) ?? trackById(jobFor(catalogKey(top))?.trackId));
+  // Songs in the overview: no hour-long mixes or playlists
+  const songs = yt.filter((r) => (r.duration ?? 0) <= 900);
+  const topYt = songs[0];
+  const topYtOwned = topYt && (libByYt.get(topYt.id) ?? trackById(jobFor(topYt.id)?.trackId));
 
   return (
     <div className="main-scroll">
@@ -455,7 +493,7 @@ export function SearchView({ query = "" }: { query?: string }) {
             ["all", "모두"],
             ["songs", "곡"],
             ["albums", "앨범"],
-            ["youtube", "YouTube"],
+            ["catalog", "카탈로그"],
             ["library", `내 라이브러리${libMatches.length ? ` (${libMatches.length})` : ""}`],
           ] as [Tab, string][]
         ).map(([k, l]) => (
@@ -469,39 +507,35 @@ export function SearchView({ query = "" }: { query?: string }) {
       <div className="page-pad">
         {tab === "all" && (
           <>
-            {top && (
+            {topYt ? (
               <div className="top-result">
                 <div>
                   <div className="section-title">
                     <h2>상위 결과</h2>
                   </div>
-                  <div className="top-card">
+                  <div className="top-card yt-top" {...activate(() => (topYtOwned ? playOne(topYtOwned) : !isBusy(jobFor(topYt.id)) && downloadYt(topYt, tapAfter)))}>
                     <div className="art">
-                      <img src={top.artwork} alt="" />
+                      <img src={topYt.thumbnail} alt="" />
                     </div>
                     <div className="foot">
                       <div className="meta">
-                        <h3>{top.title}</h3>
+                        <h3>{parseYtTitle(topYt).title}</h3>
                         <div className="s">
-                          곡 • <b>{top.artist}</b>
+                          곡 • <b>{parseYtTitle(topYt).artist}</b>
                         </div>
                       </div>
                       <div className="corner">
-                      {topOwned ? (
-                        <button className="play-fab" onClick={() => playOne(topOwned)}>
-                          {s.current === topOwned.id && s.playing ? (
-                            <Pause size={24} fill="currentColor" />
-                          ) : (
-                            <Play size={24} fill="currentColor" />
-                          )}
-                        </button>
-                      ) : (
-                        <ResultActions
-                          title={top.title}
-                          job={jobFor(catalogKey(top))}
-                          onStart={(after) => downloadCatalog(top, after)}
-                        />
-                      )}
+                        {topYtOwned ? (
+                          <button className="play-fab" onClick={(e) => (e.stopPropagation(), playOne(topYtOwned))}>
+                            {s.current === topYtOwned.id && s.playing ? (
+                              <Pause size={24} fill="currentColor" />
+                            ) : (
+                              <Play size={24} fill="currentColor" />
+                            )}
+                          </button>
+                        ) : (
+                          <ResultActions title={topYt.title} job={jobFor(topYt.id)} onStart={(after) => downloadYt(topYt, after)} />
+                        )}
                       </div>
                     </div>
                   </div>
@@ -511,18 +545,15 @@ export function SearchView({ query = "" }: { query?: string }) {
                     <h2>곡</h2>
                     <button onClick={() => setTab("songs")}>모두 표시</button>
                   </div>
-                  {catalog.slice(1, 5).map((c, i) => catalogRow(c, i, true))}
+                  {songs.slice(1, 5).map((r) => ytRow(r, true))}
                 </div>
               </div>
-            )}
-            {albums.length > 0 && (
-              <>
-                <div className="section-title">
-                  <h2>앨범</h2>
-                  <button onClick={() => setTab("albums")}>모두 표시</button>
+            ) : (
+              ytLoading && (
+                <div className="empty">
+                  <Loader2 className="spin" />
                 </div>
-                {albumCards(albums.slice(0, 6))}
-              </>
+              )
             )}
             {libMatches.length > 0 && (
               <>
@@ -533,16 +564,25 @@ export function SearchView({ query = "" }: { query?: string }) {
                 <TrackTable tracks={libMatches.slice(0, 5)} label={`'${query}' 검색 결과`} extra={null} />
               </>
             )}
-            {yt.length > 0 && (
+            {albums.length > 0 && (
               <>
                 <div className="section-title">
-                  <h2>YouTube</h2>
-                  <button onClick={() => setTab("youtube")}>모두 표시</button>
+                  <h2>앨범</h2>
+                  <button onClick={() => setTab("albums")}>모두 표시</button>
                 </div>
-                {yt.slice(0, 5).map((r) => ytRow(r))}
+                {albumCards(albums.slice(0, 6))}
               </>
             )}
-            {loading === 0 && !catalog.length && !yt.length && !libMatches.length && !albums.length && (
+            {catalog.length > 0 && (
+              <>
+                <div className="section-title">
+                  <h2>카탈로그</h2>
+                  <button onClick={() => setTab("catalog")}>모두 표시</button>
+                </div>
+                {catalog.slice(0, 4).map((c, i) => catalogRow(c, i, true))}
+              </>
+            )}
+            {loading === 0 && !ytLoading && !catalog.length && !yt.length && !libMatches.length && !albums.length && (
               <div className="empty">
                 <h2>'{query}'에 대한 결과가 없습니다</h2>
                 철자를 확인하거나 다른 키워드로 검색해보세요.
@@ -555,7 +595,12 @@ export function SearchView({ query = "" }: { query?: string }) {
             <div className="section-title">
               <h2>곡</h2>
             </div>
-            {catalog.map((c, i) => catalogRow(c, i))}
+            {yt.map((r) => ytRow(r))}
+            {ytLoading && !yt.length && (
+              <div className="empty">
+                <Loader2 className="spin" />
+              </div>
+            )}
           </>
         )}
         {tab === "albums" && (
@@ -566,12 +611,13 @@ export function SearchView({ query = "" }: { query?: string }) {
             {albumCards(albums)}
           </>
         )}
-        {tab === "youtube" && (
+        {tab === "catalog" && (
           <>
             <div className="section-title">
-              <h2>YouTube 검색 결과</h2>
+              <h2>카탈로그</h2>
+              <span className="section-note">앨범 정보가 정리된 곡 목록 (Apple)</span>
             </div>
-            {yt.map((r) => ytRow(r))}
+            {catalog.map((c, i) => catalogRow(c, i))}
           </>
         )}
       </div>

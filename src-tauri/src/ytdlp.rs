@@ -173,7 +173,15 @@ async fn flat_listing(target: &str) -> Result<serde_json::Value, String> {
     serde_json::from_str(&out.stdout).map_err(|e| e.to_string())
 }
 
+/// YouTube search: the fast web API first, yt-dlp if that fails.
 pub async fn search(query: &str, limit: u32) -> Result<Vec<YtResult>, String> {
+    match crate::youtube::search(query, limit as usize).await {
+        Ok(results) => Ok(results),
+        Err(_) => search_ytdlp(query, limit).await,
+    }
+}
+
+pub async fn search_ytdlp(query: &str, limit: u32) -> Result<Vec<YtResult>, String> {
     let json = flat_listing(&format!("ytsearch{limit}:{query}")).await?;
     let entries = json["entries"].as_array().cloned().unwrap_or_default();
     Ok(entries
@@ -199,6 +207,8 @@ const UNWANTED: &[&str] = &[
     "live", "cover", "remix", "sped up", "slowed", "karaoke", "instrumental", "reaction",
     "8d", "nightcore", "inst.", "lyrics video", "performance", "dance practice", "fancam",
     "1 hour", "loop", "reverb",
+    // Korean results (searches ask YouTube for Korean pages)
+    "노래방", "커버", "라이브", "직캠", "1시간", "교차편집", "무대",
 ];
 
 /// Picks the YouTube upload that most likely contains the clean studio audio of a song.
@@ -216,7 +226,8 @@ pub fn best_match<'a>(
             let t = r.title.to_lowercase();
             let c = r.channel.to_lowercase();
             let mut score = 0.0;
-            if c.ends_with(" - topic") {
+            // Auto-generated "Artist - Topic" channels carry the album audio ("- 주제" on Korean pages)
+            if c.ends_with(" - topic") || c.ends_with(" - 주제") {
                 score += 30.0;
             }
             if t.contains("official audio") {
